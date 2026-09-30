@@ -14,19 +14,86 @@
 <div class="modal" id="chat"><div class="box"><button class="close" onclick="closeM('chat')">×</button><h2>💬 Chat with LUGAFILM Admin</h2><p class="muted">The viewer does not see the administrator's email, phone or location.</p><textarea id="msg" rows="5" placeholder="Wandiika obubaka..."></textarea><br><br><button onclick="sendMsg()">Send</button><div id="chatmsg" class="notice"></div></div></div>
 <div class="modal" id="ad"><div class="box"><button class="close" onclick="closeM('ad')">×</button><h2>📢 Advertise With Us</h2><p class="muted">Advertisers can request a campaign. The production payment webhook should verify payment before approval.</p><input id="adname" placeholder="Business name"><br><br><input id="adtitle" placeholder="Advert title"><br><br><select id="adplan"><option>7 days</option><option>14 days</option><option>30 days</option><option>3 months</option></select><br><br><button onclick="requestAd()">Request advert</button><p id="admsg" class="muted"></p></div></div>
 <script>
-const SB_URL='https://eduousfgunznsdsbbrcu.supabase.co';const SB_KEY='sb_publishable_53ARIfW8TOQNkKXFj-FdOA_2Pd6PXpf';const db=supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});let currentUser=null;
-const $=id=>document.getElementById(id);function openM(id){$(id).classList.add('open')}function closeM(id){$(id).classList.remove('open')}function esc(x){return String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
-async function init(){const {data}=await db.auth.getSession();currentUser=data.session?.user||null;updateAuth();await render();await notifications();db.auth.onAuthStateChange(async(event,s)=>{currentUser=s?.user||null;updateAuth();if(event==='PASSWORD_RECOVERY')openM('reset');await render();await notifications();});}
+const SB_URL='https://eduousfgunznsdsbbrcu.supabase.co';
+const SB_KEY='sb_publishable_53ARIfW8TOQNkKXFj-FdOA_2Pd6PXpf';
+const SITE_URL='https://mugerwalouiscupa-beep.github.io/lugafilm/';
+const db=supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,flowType:'implicit'}});
+let currentUser=null;
+const $=id=>document.getElementById(id);
+function openM(id){$(id).classList.add('open')}
+function closeM(id){$(id).classList.remove('open')}
+function esc(x){return String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+
+async function init(){
+  const {data}=await db.auth.getSession();
+  currentUser=data.session?.user||null;
+  updateAuth();
+  await handlePasswordRecovery();
+  await render();
+  await notifications();
+
+  db.auth.onAuthStateChange(async(event,s)=>{
+    currentUser=s?.user||null;
+    updateAuth();
+    if(event==='PASSWORD_RECOVERY'){
+      closeM('login');closeM('adminLogin');closeM('forgot');
+      $('resetMsg').textContent='';
+      openM('reset');
+    }
+    await render();
+    await notifications();
+  });
+}
+
+async function handlePasswordRecovery(){
+  const hash=window.location.hash||'';
+  const query=window.location.search||'';
+  const recovery=hash.includes('type=recovery') || query.includes('code=') || query.includes('type=recovery');
+  if(!recovery)return;
+  closeM('login');closeM('adminLogin');closeM('forgot');
+  const {data,error}=await db.auth.getSession();
+  if(error){
+    $('resetMsg').textContent='This password-reset link is invalid or has expired. Please request a new link.';
+    openM('reset');
+    return;
+  }
+  if(data.session){
+    currentUser=data.session.user;
+    updateAuth();
+    $('resetMsg').textContent='';
+    openM('reset');
+  }
+}
+
 function updateAuth(){$('who').textContent=currentUser?currentUser.email:'';$('authBtn').textContent=currentUser?'Logout':'Login'}
 async function viewerLogin(signup){const email=$('ve').value.trim(),pass=$('vp').value;if(!email||!pass)return $('authMsg').textContent='Enter your email and password.';if(pass.length<8)return $('authMsg').textContent='Password must be at least 8 characters.';let r=signup?await db.auth.signUp({email,password:pass}):await db.auth.signInWithPassword({email,password:pass});$('authMsg').textContent=r.error?r.error.message:(signup?'Account created. Check your email if email confirmation is enabled.':'Logged in.');if(!r.error&&r.data.session){currentUser=r.data.user;closeM('login');updateAuth();await notifications();}}
-
 function togglePassword(id,btn){const x=$(id);x.type=x.type==='password'?'text':'password';btn.textContent=x.type==='password'?'Show':'Hide'}
 function showRecovery(mode){['email','phone','whatsapp'].forEach(x=>{const e=$('recovery'+x.charAt(0).toUpperCase()+x.slice(1));if(e)e.style.display=x===mode?'block':'none'});$('forgotMsg').textContent=''}
-async function requestReset(){const email=$('fe').value.trim();if(!email)return $('forgotMsg').textContent='Enter your email address.';const redirect=window.location.origin+window.location.pathname;const r=await db.auth.resetPasswordForEmail(email,{redirectTo:redirect});$('forgotMsg').textContent=r.error?r.error.message:'If an account exists for that email, a password-reset link has been requested. Check Inbox and Spam.'}
+
+async function requestReset(){
+  const email=$('fe').value.trim();
+  if(!email)return $('forgotMsg').textContent='Enter your email address.';
+  $('forgotMsg').textContent='Sending reset link...';
+  const r=await db.auth.resetPasswordForEmail(email,{redirectTo:SITE_URL});
+  $('forgotMsg').textContent=r.error?r.error.message:'Reset link sent. Check your email and Spam, then tap the link.';
+}
+
 async function requestPhoneCode(){const phone=$('frphone').value.trim();if(!phone)return $('forgotMsg').textContent='Enter your recovery telephone number.';const r=await db.auth.signInWithOtp({phone,options:{shouldCreateUser:false}});if(r.error){$('forgotMsg').textContent=r.error.message;return}$('frcode').style.display='block';$('verifyPhoneBtn').style.display='inline-block';$('forgotMsg').textContent='A verification code was requested. This requires phone OTP to be enabled in Supabase.'}
 async function verifyPhoneCode(){const phone=$('frphone').value.trim(),token=$('frcode').value.trim();if(!phone||!token)return $('forgotMsg').textContent='Enter your phone number and code.';const r=await db.auth.verifyOtp({phone,token,type:'sms'});if(r.error){$('forgotMsg').textContent=r.error.message;return}currentUser=r.data.user;$('forgotMsg').textContent='Phone verified. You are signed in; you can now use Create New Password.';closeM('forgot');openM('reset')}
-function requestWhatsAppRecovery(){ $('forgotMsg').textContent='WhatsApp recovery needs a verified WhatsApp provider and server-side code delivery before it can be activated.'} 
-async function setNewPassword(){const a=$('np').value,b=$('np2').value;if(a.length<8)return $('resetMsg').textContent='Password must be at least 8 characters.';if(a!==b)return $('resetMsg').textContent='Passwords do not match.';const r=await db.auth.updateUser({password:a});$('resetMsg').textContent=r.error?r.error.message:'Password changed successfully. You can now log in.';if(!r.error)setTimeout(()=>closeM('reset'),1200)}
+function requestWhatsAppRecovery(){$('forgotMsg').textContent='WhatsApp recovery needs a verified WhatsApp provider and server-side code delivery before it can be activated.'}
+
+async function setNewPassword(){
+  const a=$('np').value,b=$('np2').value;
+  if(a.length<8)return $('resetMsg').textContent='Password must be at least 8 characters.';
+  if(a!==b)return $('resetMsg').textContent='Passwords do not match.';
+  $('resetMsg').textContent='Saving new password...';
+  const r=await db.auth.updateUser({password:a});
+  if(r.error){$('resetMsg').textContent=r.error.message;return}
+  $('resetMsg').textContent='Password changed successfully. You can now log in.';
+  $('np').value='';$('np2').value='';
+  setTimeout(async()=>{closeM('reset');window.history.replaceState({},document.title,SITE_URL);await db.auth.signOut();currentUser=null;updateAuth();openM('adminLogin')},1200);
+}
+
 async function adminLogin(){const email=$('ae').value.trim(),pass=$('ap').value;if(!email||!pass)return $('adminMsg').textContent='Enter administrator credentials.';const r=await db.auth.signInWithPassword({email,password:pass});if(r.error)return $('adminMsg').textContent=r.error.message;const a=await db.from('lugafilm_admins').select('user_id').eq('user_id',r.data.user.id).maybeSingle();if(a.error||!a.data){await db.auth.signOut();return $('adminMsg').textContent='This account is not an administrator.'}closeM('adminLogin');openM('admin');adminTab('dash');currentUser=r.data.user;updateAuth();}
 async function logout(){await db.auth.signOut();closeM('admin');updateAuth();}
 async function activeSub(){if(!currentUser)return false;const {data}=await db.from('lugafilm_subscriptions').select('id').eq('user_id',currentUser.id).eq('status','active').gt('expires_at',new Date().toISOString()).limit(1);return !!data?.length}
@@ -51,14 +118,7 @@ async function deleteMovie(id){if(!confirm('Delete this movie?'))return;let r=aw
 async function deleteAllMovies(){if(!(await isAdmin()))return alert('Administrator required.');if(!confirm('Delete ALL movies? This cannot be undone.'))return;let r=await db.from('lugafilm_movies').delete().not('id','is',null);if(r.error)alert(r.error.message);else alert('All movie records deleted.');adminTab('movies');render()}
 async function replyMsg(id){let reply=prompt('Write reply:');if(!reply)return;let r=await db.from('lugafilm_viewer_messages').update({admin_reply:reply,replied_at:new Date().toISOString()}).eq('id',id);if(r.error)alert(r.error.message);adminTab('messages')}
 async function approveAd(id){let r=await db.from('lugafilm_ads').update({status:'approved'}).eq('id',id);if(r.error)alert(r.error.message);adminTab('ads')}
-function applyAdminPath(){
-  const adminPath=/\/admin\.html$/i.test(window.location.pathname);
-  if(!adminPath)return;
-  document.querySelector('header')?.remove();
-  document.querySelector('main')?.remove();
-  document.querySelector('footer')?.remove();
-  openM('adminLogin');
-}
+function applyAdminPath(){const adminPath=/\/admin\.html$/i.test(window.location.pathname);if(!adminPath)return;document.querySelector('header')?.remove();document.querySelector('main')?.remove();document.querySelector('footer')?.remove();openM('adminLogin')}
 init();
 applyAdminPath();
 </script></body></html>
