@@ -17,7 +17,7 @@ button:disabled{opacity:.55;cursor:not-allowed}.secondary{background:#162b48;col
 .danger{background:var(--danger);color:#fff}.hero{padding:55px 18px}.hero h1{font-size:clamp(35px,7vw,65px);margin:0}
 .tools{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}
 input,select,textarea{background:#0b1728;color:#fff;border:1px solid #ffffff20;border-radius:9px;padding:12px;width:100%}
-.tools input{max-width:430px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:15px}
+.tools input{max-width:430px}.searchForm{display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%}.searchForm input{flex:1;min-width:220px}.searchForm button{width:auto}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:15px}
 .card{background:var(--card);border-radius:14px;overflow:hidden;border:1px solid #ffffff10}
 .poster{height:240px;background:linear-gradient(135deg,#1a3355,#0b1626);display:grid;place-items:center;color:#70829b;text-align:center}
 .poster img{width:100%;height:100%;object-fit:cover}.body{padding:12px}
@@ -58,7 +58,11 @@ hr{border:0;border-top:1px solid #ffffff15;margin:18px 0}
 <section id="movies">
   <h2>🎬 Filimu</h2>
   <div class="tools">
-    <input id="q" placeholder="Search movies..." oninput="render()">
+    <form id="searchForm" class="searchForm" onsubmit="searchMovies(event)">
+      <input id="q" placeholder="Search movies..." autocomplete="off">
+      <button type="submit">🔍 Search</button>
+      <button type="button" class="secondary" onclick="clearSearch()">Clear</button>
+    </form>
     <select id="cat" onchange="render()">
       <option value="">All categories</option><option>Indian</option><option>Korean</option><option>Chinese</option>
       <option>Love Stories</option><option>Science Fiction</option><option>Action</option><option>Drama</option><option>Comedy</option><option>Horror</option>
@@ -76,9 +80,9 @@ hr{border:0;border-top:1px solid #ffffff15;margin:18px 0}
 <div class="modal" id="login"><div class="box">
 <button class="close" onclick="closeM('login')">×</button>
 <h2>Login / Create Account</h2>
-<p class="muted">Viewers and administrators use the same login here. Administrator access is detected automatically after login.</p>
+<p class="muted">This login is for viewers only. Administrators must use the separate Administrator Login.</p>
 <input id="ve" type="email" autocomplete="off" placeholder="Email address"><br><br>
-<div style="display:flex;gap:7px"><input id="vp" type="password" autocomplete="off" placeholder="Password"><button class="secondary" onclick="togglePassword('vp',this)">Show</button></div><br>
+<div style="display:flex;gap:7px"><input id="vp" type="password" autocomplete="new-password" placeholder="Password"><button class="secondary" onclick="togglePassword('vp',this)">Show</button></div><br>
 <button onclick="viewerLogin(false)">Login</button>
 <button class="secondary" onclick="viewerLogin(true)">Create account</button>
 <button class="secondary" onclick="openM('forgot')">Forgot password?</button>
@@ -133,6 +137,19 @@ hr{border:0;border-top:1px solid #ffffff15;margin:18px 0}
 <p id="playerMsg" class="muted"></p>
 </div></div>
 
+<div class="modal" id="adminLogin"><div class="box">
+<button class="close" onclick="closeM('adminLogin')">×</button>
+<h2>🛠 Administrator Login</h2>
+<p class="muted">Administrator access is separate from viewer accounts.</p>
+<form id="adminLoginForm" autocomplete="off" onsubmit="adminLogin(event)">
+<input id="ae" type="email" autocomplete="username" placeholder="Administrator email" required><br><br>
+<div style="display:flex;gap:7px"><input id="ap" type="password" autocomplete="new-password" placeholder="Administrator password" required><button type="button" class="secondary" onclick="togglePassword('ap',this)">Show</button></div><br>
+<button type="submit">Administrator Login</button>
+<button type="button" class="secondary" onclick="openAdminReset()">Forgot password?</button>
+<p id="adminMsg" class="muted"></p>
+</form>
+</div></div>
+
 <div class="modal" id="admin"><div class="box">
 <button class="close" onclick="closeM('admin')">×</button>
 <h2>🛠 LUGAFILM Dashboard</h2>
@@ -174,26 +191,46 @@ async function refreshAuth(){
 }
 
 function updateAuth(){
-  $('viewerAuthBtn').textContent=currentUser?(currentIsAdmin?'Dashboard / Logout':'Logout'):'Login / Register';
+  $('viewerAuthBtn').textContent=currentUser?'Viewer Logout':'Viewer Login / Register';
 }
 
 function authAction(){
   if(!currentUser){openM('login');return}
-  if(currentIsAdmin){openM('admin');adminTab('dash');return}
+  if(currentIsAdmin){
+    // An administrator should never be operating through the viewer button.
+    closeM('admin'); closeM('adminLogin');
+    alert('Administrator is signed in. Use Administrator Login to open the dashboard.');
+    return;
+  }
   logout();
 }
 
-async function adminLogin(){
+async function adminLogin(e){
+  if(e)e.preventDefault();
   const email=$('ae').value.trim(), pass=$('ap').value;
-  if(!email||!pass)return $('adminMsg').textContent='Enter administrator email and password.';
+  if(!email||!pass){$('adminMsg').textContent='Enter administrator email and password.';return}
   $('adminMsg').textContent='Signing in...';
   const r=await db.auth.signInWithPassword({email,password:pass});
   if(r.error){$('adminMsg').textContent=r.error.message;return}
   currentUser=r.data.user;
   currentIsAdmin=await isAdmin();
-  if(!currentIsAdmin){await db.auth.signOut();currentUser=null;currentIsAdmin=false;$('adminMsg').textContent='This account is not an administrator.';return}
-  closeM('adminLogin');$('ae').value='';$('ap').value='';updateAuth();await render();await notifications();openM('admin');await adminTab('dash');
+  if(!currentIsAdmin){
+    await db.auth.signOut(); currentUser=null; currentIsAdmin=false; updateAuth();
+    $('adminMsg').textContent='This account is not registered as an administrator.';
+    return;
+  }
+  $('ae').value=''; $('ap').value='';
+  closeM('adminLogin'); updateAuth();
+  await render(); await notifications();
+  openM('admin'); await adminTab('dash');
 }
+
+function openAdminReset(){
+  const email=$('ae').value.trim();
+  if(email)$('fe').value=email;
+  closeM('adminLogin'); openM('forgot');
+}
+
 
 async function viewerLogin(signup){
   const email=$('ve').value.trim(), pass=$('vp').value;
@@ -206,8 +243,12 @@ async function viewerLogin(signup){
     return;
   }
   currentUser=r.data.user; currentIsAdmin=await isAdmin();
-  closeM('login'); updateAuth(); await notifications();
-  if(currentIsAdmin){openM('admin');await adminTab('dash')}
+  if(currentIsAdmin){
+    await db.auth.signOut(); currentUser=null; currentIsAdmin=false; updateAuth();
+    $('authMsg').textContent='This is an administrator account. Please use Administrator Login.';
+    return;
+  }
+  closeM('login'); $('ve').value=''; $('vp').value=''; updateAuth(); await notifications();
 }
 
 function togglePassword(id,btn){const x=$(id);x.type=x.type==='password'?'text':'password';btn.textContent=x.type==='password'?'Show':'Hide'}
@@ -230,7 +271,7 @@ async function setNewPassword(){
 }
 
 async function logout(){
-  await db.auth.signOut();currentUser=null;currentIsAdmin=false;closeM('admin');updateAuth();await render();await notifications();
+  await db.auth.signOut();currentUser=null;currentIsAdmin=false;closeM('admin');closeM('adminLogin');closeM('login');$('ve').value='';$('vp').value='';$('ae').value='';$('ap').value='';updateAuth();await render();await notifications();
 }
 
 async function activeSub(){
@@ -239,9 +280,21 @@ async function activeSub(){
   return !!r.data?.length;
 }
 
+async function searchMovies(e){
+  if(e)e.preventDefault();
+  await render();
+  $('movies').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+function clearSearch(){
+  $('q').value='';
+  $('cat').value='';
+  render();
+}
+
 async function render(){
   const q=($('q')?.value||'').trim().toLowerCase(),cat=$('cat')?.value||'';
-  const r=await db.from('lugafilm_movies').select('*').eq('is_published',true).order('uploaded_at',{ascending:false});
+  const r=await db.from('lugafilm_movies').select('*').eq('is_published',true).eq('is_series',false).order('uploaded_at',{ascending:false});
   if(r.error){$('grid').innerHTML='<p class="muted">Could not load movies. Check the Supabase connection/table permissions.</p>';return}
   const a=(r.data||[]).filter(m=>(!cat||m.category===cat)&&(!q||String(m.title||'').toLowerCase().includes(q)));
   $('grid').innerHTML=a.length?a.map(m=>movieCard(m)).join(''):'<p class="muted">No movies found.</p>';
@@ -334,7 +387,7 @@ async function adminTab(tab){
       <div class="stat">Messages<b>${msg.count||0}</b></div>
       <div class="stat">Unread alerts<b>${n.count||0}</b></div>
     </div>
-    <div class="notice">Movie storage is cloud-based. There is no 70-movie code limit; the actual limit depends on your Supabase database/storage plan.</div>
+    <div class="notice">Movie storage is cloud-based and supports 50+ movies. The practical limit depends on your Supabase database/storage plan and storage capacity.</div>
     <div class="notice">If the Viewers count shows —, create the optional <b>lugafilm_viewers</b> table/trigger described in the setup notes below.</div>`;
   }
 
@@ -450,9 +503,18 @@ async function followSite(){
 }
 
 async function refreshSite(){
-  const btn=document.querySelector('nav button');
-  await refreshAuth();await render();await notifications();
-  if(currentIsAdmin && $('admin').classList.contains('open'))await adminTab('dash');
+  const btn=document.querySelector('nav button[onclick*="refreshSite"]');
+  if(btn){btn.disabled=true;btn.textContent='↻ Refreshing...';}
+  try{
+    await refreshAuth();
+    await render();
+    await notifications();
+    if(currentIsAdmin && $('admin').classList.contains('open')) await adminTab('dash');
+  }catch(err){
+    alert('Refresh failed: '+(err?.message||err));
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='↻ Refresh';}
+  }
 }
 async function shareSite(){
   const data={title:'LUGAFILM',text:'Watch movies on LUGAFILM',url:window.location.href};
