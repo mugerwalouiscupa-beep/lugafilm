@@ -81,8 +81,8 @@ hr{border:0;border-top:1px solid #ffffff15;margin:18px 0}
 <button class="close" onclick="closeM('login')">×</button>
 <h2>Login / Create Account</h2>
 <p class="muted">This login is for viewers only. Administrators must use the separate Administrator Login.</p>
-<input id="ve" type="email" autocomplete="off" placeholder="Email address"><br><br>
-<div style="display:flex;gap:7px"><input id="vp" type="password" autocomplete="new-password" placeholder="Password"><button class="secondary" onclick="togglePassword('vp',this)">Show</button></div><br>
+<input id="ve" type="email" autocomplete="off" name="viewer-login-email" placeholder="Email address"><br><br>
+<div style="display:flex;gap:7px"><input id="vp" type="password" autocomplete="off" name="viewer-login-password" placeholder="Password"><button class="secondary" onclick="togglePassword('vp',this)">Show</button></div><br>
 <button onclick="viewerLogin(false)">Login</button>
 <button class="secondary" onclick="viewerLogin(true)">Create account</button>
 <button class="secondary" onclick="openM('forgot')">Forgot password?</button>
@@ -92,7 +92,7 @@ hr{border:0;border-top:1px solid #ffffff15;margin:18px 0}
 <div class="modal" id="forgot"><div class="box">
 <button class="close" onclick="closeM('forgot')">×</button>
 <h2>Account / Password Recovery</h2>
-<p class="muted">Enter the email used for your viewer or administrator account. Supabase will send the password-reset link to that email.</p>
+<p class="muted">Enter the email for the account you want to recover. Viewer and administrator sign-in remain separate.</p>
 <input id="fe" type="email" autocomplete="off" placeholder="Email address"><br><br>
 <button onclick="requestReset()">Send password reset link</button>
 <p id="forgotMsg" class="muted"></p>
@@ -140,10 +140,10 @@ hr{border:0;border-top:1px solid #ffffff15;margin:18px 0}
 <div class="modal" id="adminLogin"><div class="box">
 <button class="close" onclick="closeM('adminLogin')">×</button>
 <h2>🛠 Administrator Login</h2>
-<p class="muted">Administrator access is separate from viewer accounts.</p>
+<p class="muted">Private administrator sign-in. Administrator credentials are not displayed or stored in this website.</p>
 <form id="adminLoginForm" autocomplete="off" onsubmit="adminLogin(event)">
-<input id="ae" type="email" autocomplete="username" placeholder="Administrator email" required><br><br>
-<div style="display:flex;gap:7px"><input id="ap" type="password" autocomplete="new-password" placeholder="Administrator password" required><button type="button" class="secondary" onclick="togglePassword('ap',this)">Show</button></div><br>
+<input id="ae" type="email" autocomplete="off" name="admin-login-email" placeholder="Administrator email" required><br><br>
+<div style="display:flex;gap:7px"><input id="ap" type="password" autocomplete="off" name="admin-login-password" placeholder="Administrator password" required><button type="button" class="secondary" onclick="togglePassword('ap',this)">Show</button></div><br>
 <button type="submit">Administrator Login</button>
 <button type="button" class="secondary" onclick="openAdminReset()">Forgot password?</button>
 <p id="adminMsg" class="muted"></p>
@@ -167,8 +167,8 @@ hr{border:0;border-top:1px solid #ffffff15;margin:18px 0}
 </div></div>
 
 <script>
-const SB_URL='https://eduousfgunznsdsbbrcu.supabase.co';
-const SB_KEY='sb_publishable_53ARIfW8TOQNkKXFj-FdOA_2Pd6PXpf';
+const SB_URL='https://tyamblbkvgdvztfkkzcc.supabase.co';
+const SB_KEY='sb_publishable_1qJsptD3PERCwspJxpk_EQ_h9mQZCX9';
 const db=supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:false,autoRefreshToken:true,detectSessionInUrl:true}});
 let currentUser=null, currentIsAdmin=false;
 
@@ -271,7 +271,7 @@ async function setNewPassword(){
 }
 
 async function logout(){
-  await db.auth.signOut();currentUser=null;currentIsAdmin=false;closeM('admin');closeM('adminLogin');closeM('login');$('ve').value='';$('vp').value='';$('ae').value='';$('ap').value='';updateAuth();await render();await notifications();
+  await db.auth.signOut();try{localStorage.removeItem('sb-'+SB_URL.split('//')[1].split('.')[0]+'-auth-token');sessionStorage.clear()}catch(e){} currentUser=null;currentIsAdmin=false;closeM('admin');closeM('adminLogin');closeM('login');$('ve').value='';$('vp').value='';$('ae').value='';$('ap').value='';updateAuth();await render();await notifications();
 }
 
 async function activeSub(){
