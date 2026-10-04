@@ -122,8 +122,8 @@ a{color:#ffd166}
     <h2>Recover your account</h2>
     <div class="form">
       <input id="fe" type="email" autocomplete="off" placeholder="Email address">
-      <button class="btn primary" onclick="requestReset()">Send password reset link</button>
-      <div id="forgotMsg" class="msg">Enter the email used for your LUGAFILM account.</div>
+      <button class="btn primary" id="resetBtn" onclick="requestReset()">Send password reset link</button>
+      <div id="forgotMsg" class="msg">Enter the email used for your LUGAFILM viewer or administrator account.</div>
     </div>
   </div>
 </div>
@@ -235,7 +235,7 @@ const db=supabase.createClient(SB_URL,SB_KEY,{
     persistSession:false,
     autoRefreshToken:true,
     detectSessionInUrl:true,
-    flowType:'pkce'
+    flowType:'implicit'
   }
 });
 
@@ -333,6 +333,18 @@ async function refreshAuth(){
     currentUser=null;
     currentIsAdmin=false;
   }
+}
+
+let resetSource='viewer';
+
+function openForgot(source='viewer'){
+  resetSource=source==='admin'?'admin':'viewer';
+  const sourceEmail=resetSource==='admin'?$('ae').value.trim():$('ve').value.trim();
+  $('fe').value=sourceEmail;
+  msg('forgotMsg','Enter the email used for your LUGAFILM '+(resetSource==='admin'?'administrator':'viewer')+' account.');
+  closeModal('viewerAuth');
+  closeModal('adminLogin');
+  openModal('forgot');
 }
 
 function openViewerAuth(){
@@ -469,13 +481,10 @@ async function adminLogout(){
 /* =========================
    PASSWORD RECOVERY
    ========================= */
-async function requestReset(source='viewer'){
-  const email=(source==='admin'?$(
-    'ae'
-  ):$('fe')).value.trim();
-
-  const out=source==='admin'?'adminLoginMsg':'forgotMsg';
-  const btn=document.querySelector('#forgot button[onclick^="requestReset"]');
+async function requestReset(){
+  const email=$('fe').value.trim();
+  const out='forgotMsg';
+  const btn=$('resetBtn');
 
   if(!email){
     msg(out,'Enter your email address.','err');
@@ -487,20 +496,20 @@ async function requestReset(source='viewer'){
   }
 
   if(btn){btn.disabled=true;btn.textContent='Sending...';}
-  msg(out,'Requesting password reset...');
+  msg(out,'Sending password reset request...');
 
   try{
     const {error}=await db.auth.resetPasswordForEmail(email,{
-      redirectTo:SITE_URL+'?reset=1'
+      redirectTo:SITE_URL
     });
     if(error)throw error;
 
     msg(out,
-      'If an account exists for this email, Supabase has requested a password reset email. Check Inbox, Spam and All Mail. Do not repeatedly press the button because Supabase applies rate limits.',
+      'Request sent. Check Inbox, Spam and All Mail for the password reset email. If nothing arrives, make sure this exact email exists under Supabase → Authentication → Users in the LUGAFILM project.',
       'ok'
     );
   }catch(e){
-    msg(out,'Could not request the reset: '+(e.message||String(e)),'err');
+    msg(out,'Could not send the reset request: '+(e.message||String(e)),'err');
   }finally{
     if(btn){btn.disabled=false;btn.textContent='Send password reset link';}
   }
@@ -539,19 +548,14 @@ async function setNewPassword(){
 }
 
 async function handlePasswordRecovery(){
-  const params=new URLSearchParams(location.search);
-  const resetFlag=params.get('reset')==='1';
-  const code=params.get('code');
+  const recovery=location.hash.includes('type=recovery') ||
+                 new URLSearchParams(location.search).get('type')==='recovery';
 
-  if(!resetFlag && !code && !location.hash.includes('type=recovery'))return;
+  if(!recovery)return;
 
   try{
-    /*
-      With PKCE + detectSessionInUrl:true, Supabase exchanges ?code=... automatically.
-      Wait briefly for the client to finish URL processing, then check the session.
-    */
     let session=null;
-    for(let i=0;i<10;i++){
+    for(let i=0;i<20;i++){
       const r=await db.auth.getSession();
       session=r.data?.session||null;
       if(session)break;
@@ -561,6 +565,9 @@ async function handlePasswordRecovery(){
     if(session){
       currentUser=session.user;
       currentIsAdmin=await isAdmin(currentUser);
+      closeModal('forgot');
+      closeModal('viewerAuth');
+      closeModal('adminLogin');
       openModal('reset');
 
       if(history.replaceState){
@@ -568,7 +575,7 @@ async function handlePasswordRecovery(){
       }
     }else{
       msg('forgotMsg',
-        'The reset link was opened, but no recovery session was found. The link may have expired, already been used, or the redirect URL may not match the Supabase URL configuration.',
+        'The reset link opened, but the recovery session could not be established. Make sure the GitHub Pages URL is added exactly to Supabase Auth → URL Configuration → Redirect URLs.',
         'err'
       );
       openModal('forgot');
@@ -1369,6 +1376,13 @@ async function init(){
       if(event==='SIGNED_OUT'){
         clearCredentials();
       }
+
+      if(event==='PASSWORD_RECOVERY' && session){
+        currentUser=session.user;
+        currentIsAdmin=await isAdmin(currentUser);
+        openModal('reset');
+      }
+
       await renderMovies();
       await renderSeries();
     },0);
