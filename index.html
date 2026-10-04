@@ -4,7 +4,30 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LUGAFILM — All the latest movies in one place</title>
-<meta name="description" content="LUGAFILM — All the latest movies in one place.">
+<meta name="description" content="LUGAFILM — All the latest movies in one place. Watch free and subscription movies and series online.">
+<meta name="robots" content="index, follow">
+<meta name="googlebot" content="index, follow">
+<link rel="canonical" href="https://mugerwalouiscupa-beep.github.io/lugafilm/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="LUGAFILM — All the latest movies in one place">
+<meta property="og:description" content="Watch movies and series on LUGAFILM.">
+<meta property="og:url" content="https://mugerwalouiscupa-beep.github.io/lugafilm/">
+<meta property="og:site_name" content="LUGAFILM">
+<meta name="twitter:card" content="summary">
+<script type="application/ld+json">
+{
+  "@context":"https://schema.org",
+  "@type":"WebSite",
+  "name":"LUGAFILM",
+  "url":"https://mugerwalouiscupa-beep.github.io/lugafilm/",
+  "description":"All the latest movies in one place.",
+  "potentialAction":{
+    "@type":"SearchAction",
+    "target":"https://mugerwalouiscupa-beep.github.io/lugafilm/?q={search_term_string}",
+    "query-input":"required name=search_term_string"
+  }
+}
+</script>
 <style>
 *{box-sizing:border-box}
 :root{--bg:#070b14;--panel:#101827;--panel2:#151f31;--text:#f5f7fb;--muted:#aeb8c8;--accent:#ffb703;--danger:#ef4444;--ok:#22c55e;--line:#263246}
@@ -235,8 +258,10 @@ const db=supabase.createClient(SB_URL,SB_KEY,{
     persistSession:false,
     autoRefreshToken:true,
     detectSessionInUrl:true,
-    flowType:'implicit'
-  }
+    flowType:'implicit',
+    storage:window.sessionStorage
+  },
+  global:{headers:{'x-client-info':'lugafilm-web'}}
 });
 
 const GENRES=[
@@ -305,8 +330,10 @@ async function safeQuery(fn,fallback=null){
 /* =========================
    AUTH / ADMIN
    ========================= */
+const ADMIN_EMAIL='mugerwalouiscupa@gmail.com';
+
 async function isAdmin(user=currentUser){
-  if(!user)return false;
+  if(!user || (user.email||'').toLowerCase()!==ADMIN_EMAIL.toLowerCase())return false;
   const {data,error}=await db
     .from('lugafilm_admins')
     .select('user_id')
@@ -548,8 +575,19 @@ async function setNewPassword(){
 }
 
 async function handlePasswordRecovery(){
-  const recovery=location.hash.includes('type=recovery') ||
-                 new URLSearchParams(location.search).get('type')==='recovery';
+  const hash=location.hash||'';
+  const search=new URLSearchParams(location.search);
+  const recovery=hash.includes('type=recovery') ||
+                 search.get('type')==='recovery' ||
+                 search.get('code')!==null;
+
+  const hashParams=new URLSearchParams(hash.replace(/^#/,''));
+  const authError=hashParams.get('error_description')||search.get('error_description');
+  if(authError){
+    openModal('forgot');
+    msg('forgotMsg','Supabase could not complete the recovery link: '+decodeURIComponent(authError.replace(/\+/g,' ')),'err');
+    return;
+  }
 
   if(!recovery)return;
 
@@ -657,7 +695,8 @@ async function renderMovies(){
     }
     grid.innerHTML=list.map(movieCard).join('');
   }catch(e){
-    grid.innerHTML=`<div class="empty">Could not load movies. Check the Supabase connection and database table. ${esc(e.message||'')}</div>`;
+    const detail=e.message||'';
+    grid.innerHTML=`<div class="empty">Could not load movies. Check the Supabase connection and database setup. ${esc(detail)}</div>`;
   }
 }
 
@@ -734,6 +773,7 @@ async function watch(id){
 
   $('playerTitle').textContent=m.title||'Movie';
   $('video').src=url;
+  $('video').controls=true;
   $('video').load();
   $('playerMsg').textContent='';
 
@@ -771,17 +811,28 @@ async function activeSub(){
    ========================= */
 async function pay(plan,amount){
   if(!requireLogin())return;
+  const days=plan==='daily'?1:(plan==='weekly'?7:30);
+  const expires=new Date(Date.now()+days*86400000).toISOString();
+  msg('payMsg',
+    `Plan selected: ${plan.toUpperCase()} — UGX ${Number(amount).toLocaleString()}. `+
+    `Send payment using your agreed Airtel Money, MTN Mobile Money or Mastercard payment channel, then submit the transaction reference to the administrator for verification.`,
+    'ok');
 
-  $('payMsg').textContent=
-    `Selected ${plan} plan — UGX ${Number(amount).toLocaleString()}. `+
-    `Payment options: Airtel Money, MTN Mobile Money or Mastercard. `+
-    `A secure payment gateway/webhook must be connected before payment can automatically activate access.`;
-
-  /*
-    IMPORTANT:
-    This frontend deliberately does NOT mark a subscription as paid.
-    A real payment gateway/webhook must verify the transaction server-side.
-  */
+  // Create a pending subscription request. It does NOT grant premium access.
+  const {error}=await db.from('lugafilm_subscriptions').insert({
+    user_id:currentUser.id,
+    plan,
+    amount:Number(amount),
+    status:'pending',
+    expires_at:expires
+  });
+  if(error){
+    msg('payMsg','Could not create the subscription request: '+(error.message||String(error)),'err');
+  }else{
+    msg('payMsg',
+      `Subscription request created for ${plan}. Payment is still pending verification by the administrator. Premium access starts only after approval.`,
+      'ok');
+  }
 }
 
 /* =========================
@@ -1044,6 +1095,17 @@ async function uploadFile(file){
   return data.publicUrl;
 }
 
+async function testStorage(){
+  if(!currentIsAdmin)return;
+  try{
+    const {data,error}=await db.storage.from('lugafilm-media').list('',{limit:1});
+    if(error)throw error;
+    alert('Media storage is connected and the lugafilm-media bucket is accessible.');
+  }catch(e){
+    alert('Storage test failed: '+(e.message||String(e)));
+  }
+}
+
 async function saveMovie(isSeries=false){
   if(!currentIsAdmin){
     msg('saveMovieMsg','Administrator access is required.','err');
@@ -1257,14 +1319,38 @@ async function adminSubscribers(){
     .limit(200);
 
   $('adminContent').innerHTML=`
-    <h3>Subscribers</h3>
+    <h3>Subscribers & access</h3>
+    <div class="msg">Subscriptions are activated only after a payment is verified. You can approve a pending request here.</div>
     ${error
       ? `<div class="empty">${esc(error.message)}</div>`
       : `<div class="list">${(data||[]).map(s=>`
           <div class="listitem">
-            <b>${esc(s.plan||'Plan')}</b>
-            <div class="small">User: ${esc(s.user_id||'')} • Status: ${esc(s.status||'')} • Expires: ${esc(s.expires_at||'')}</div>
-          </div>`).join('')||'<div class="empty">No subscriptions found.</div>'}</div>`}`;
+            <b>${esc(s.plan||'Plan')} — ${esc(s.status||'')}</b>
+            <div class="small">User: ${esc(s.user_id||'')} • Amount: UGX ${Number(s.amount||0).toLocaleString()} • Expires: ${esc(s.expires_at||'')}</div>
+            <div class="actions" style="margin-top:7px">
+              ${s.status!=='active'?`<button class="btn primary" onclick="approveSubscription('${esc(s.id)}','${esc(s.plan||'daily')}')">Approve</button>`:''}
+              <button class="btn danger" onclick="deleteSubscription('${esc(s.id)}')">Delete</button>
+            </div>
+          </div>`).join('')||'<div class="empty">No subscription records found.</div>'}</div>`}`;
+}
+
+async function approveSubscription(id,plan){
+  if(!currentIsAdmin)return;
+  const days=plan==='daily'?1:(plan==='weekly'?7:30);
+  const expires=new Date(Date.now()+days*86400000).toISOString();
+  const {error}=await db.from('lugafilm_subscriptions')
+    .update({status:'active',expires_at:expires,approved_by:currentUser.id,approved_at:new Date().toISOString()})
+    .eq('id',id);
+  if(error){alert(error.message);return;}
+  await adminSubscribers();
+}
+
+async function deleteSubscription(id){
+  if(!currentIsAdmin)return;
+  if(!confirm('Delete this subscription record?'))return;
+  const {error}=await db.from('lugafilm_subscriptions').delete().eq('id',id);
+  if(error){alert(error.message);return;}
+  await adminSubscribers();
 }
 
 async function adminAnalytics(){
