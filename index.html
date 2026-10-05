@@ -397,7 +397,6 @@ function openForgot(source='viewer'){
 
 function openViewerAuth(){
   closeModal('viewerSignupModal');
-  $('viewerTitle').textContent='Viewer Login';
   if(currentUser){
     $('viewerMsg').textContent='You are signed in as '+(currentUser.email||'')+'.';
   }else{
