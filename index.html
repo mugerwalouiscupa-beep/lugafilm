@@ -196,11 +196,12 @@ a{color:#ffd166}
     <div id="paymentChoices" class="hidden" style="margin-top:15px">
       <div id="selectedPlan" class="msg ok"></div>
       <div class="form" style="margin-top:10px">
-        <button class="btn primary" onclick="startPayment('Airtel Money')">Pay with Airtel Money</button>
-        <button class="btn primary" onclick="startPayment('MTN Mobile Money')">Pay with MTN Mobile Money</button>
-        <button class="btn primary" onclick="startPayment('Mastercard')">Pay with Mastercard</button>
-        <input id="paymentRef" placeholder="Payment transaction/reference (after payment)">
-        <button class="btn" onclick="requestSubscriptionOTP()">Generate subscription OTP</button>
+        <div class="msg ok">
+          <b>Pay directly to LUGAFILM: 0747064373</b><br>
+          Send the exact subscription amount using your Mobile Money service. Never enter your Mobile Money PIN or OTP on LUGAFILM.
+        </div>
+        <input id="paymentRef" placeholder="Payment transaction/reference">
+        <button class="btn primary" onclick="submitSubscriptionRequest()">Send payment reference</button>
       </div>
     </div>
     <div id="payMsg" class="msg" style="margin-top:12px">Choose a plan above.</div>
@@ -909,31 +910,35 @@ function selectPlan(plan,amount){
   selectedPlan={plan,amount};
   $('paymentChoices').classList.remove('hidden');
   $('selectedPlan').textContent=`${plan.charAt(0).toUpperCase()+plan.slice(1)} subscription — UGX ${Number(amount).toLocaleString()}`;
-  msg('payMsg','Choose Airtel Money, MTN Mobile Money or Mastercard. After the payment gateway confirms payment, the subscription OTP can be issued.');
+  msg('payMsg','Pay directly to 0747064373, then enter your payment transaction/reference and send it. The administrator will verify it and approve your account.');
 }
 
 function startPayment(method){
   if(!selectedPlan){msg('payMsg','Select a subscription plan first.','err');return;}
-  msg('payMsg',`${method} selected for UGX ${Number(selectedPlan.amount).toLocaleString()}. The secure payment gateway must be connected to LUGAFILM before this button can collect real money. Do not send money to an unverified number shown on the website.`);
+  msg('payMsg',`Send UGX ${Number(selectedPlan.amount).toLocaleString()} directly to 0747064373. After payment, enter the transaction/reference below.`);
 }
 
-async function requestSubscriptionOTP(){
+async function submitSubscriptionRequest(){
   if(!requireLogin())return;
   if(!selectedPlan){msg('payMsg','Select a subscription plan first.','err');return;}
   const reference=$('paymentRef').value.trim();
-  if(!reference){msg('payMsg','Enter the payment transaction/reference after completing payment.','err');return;}
-  // A client-side OTP is NOT used to prove payment. This records a pending request only.
+  if(!reference){msg('payMsg','Enter the payment transaction/reference you received after paying.','err');return;}
+
   try{
     const {error}=await db.from('lugafilm_subscriptions').insert({
       user_id:currentUser.id,
+      email:currentUser.email||'',
       plan:selectedPlan.plan,
+      amount:selectedPlan.amount,
+      payment_reference:reference,
       status:'pending',
       expires_at:null
     });
     if(error)throw error;
-    msg('payMsg','Payment reference received. Your subscription is pending verification. A secure OTP should be sent only after the payment gateway verifies the transaction.','ok');
+    msg('payMsg','Payment reference sent successfully. Your request is pending administrator verification. You will get access after approval.','ok');
+    $('paymentRef').value='';
   }catch(e){
-    msg('payMsg','Could not submit the subscription request: '+(e.message||String(e)),'err');
+    msg('payMsg','Could not send your payment reference: '+(e.message||String(e)),'err');
   }
 }
 
@@ -1471,14 +1476,52 @@ async function adminSubscribers(){
     .limit(200);
 
   $('adminContent').innerHTML=`
-    <h3>Subscribers</h3>
+    <h3>Subscription Requests & Access</h3>
+    <div class="msg ok">
+      <b>Payment number: 0747064373</b><br>
+      Review the transaction reference, email, plan and payment date. Approve only after you confirm the money was received.
+    </div>
     ${error
       ? `<div class="empty">${esc(error.message)}</div>`
-      : `<div class="list">${(data||[]).map(s=>`
-          <div class="listitem">
-            <b>${esc(s.plan||'Plan')}</b>
-            <div class="small">User: ${esc(s.user_id||'')} • Status: ${esc(s.status||'')} • Expires: ${esc(s.expires_at||'')}</div>
-          </div>`).join('')||'<div class="empty">No subscriptions found.</div>'}</div>`}`;
+      : `<div class="list">${(data||[]).map(s=>{
+          const active=s.status==='active' && s.expires_at && new Date(s.expires_at)>new Date();
+          const status=active?'ACTIVE':String(s.status||'PENDING').toUpperCase();
+          const amount=s.amount!=null?Number(s.amount).toLocaleString():'';
+          return `<div class="listitem">
+            <b>${esc(s.email||'Email not recorded')}</b>
+            <div class="small">Plan: ${esc(s.plan||'')} • UGX ${amount} • Status: ${esc(status)}<br>
+            Payment reference: <b>${esc(s.payment_reference||'Not supplied')}</b><br>
+            Requested: ${esc(s.created_at||'')}<br>
+            Expires: ${esc(s.expires_at||'Not approved yet')}</div>
+            <div class="actions" style="margin-top:8px">
+              ${active
+                ? `<button class="btn danger" onclick="revokeSubscription('${esc(s.id)}')">Disconnect access</button>`
+                : `<button class="btn primary" onclick="approveSubscription('${esc(s.id)}','${esc(s.plan||'daily')}')">Approve & give access</button>`}
+            </div>
+          </div>`;
+        }).join('')||'<div class="empty">No subscription requests yet.</div>'}</div>`}`;
+}
+
+async function approveSubscription(id,plan){
+  if(!currentIsAdmin)return;
+  const days=plan==='daily'?1:(plan==='weekly'?7:30);
+  const expires=new Date(Date.now()+days*24*60*60*1000).toISOString();
+  if(!confirm('Confirm payment has been received and give this member '+days+' day(s) of access?'))return;
+  const {error}=await db.from('lugafilm_subscriptions').update({
+    status:'active',expires_at:expires,approved_at:new Date().toISOString(),approved_by:currentUser.id
+  }).eq('id',id);
+  if(error){alert('Could not approve: '+error.message);return;}
+  await adminSubscribers();
+}
+
+async function revokeSubscription(id){
+  if(!currentIsAdmin)return;
+  if(!confirm('Disconnect this subscriber immediately?'))return;
+  const {error}=await db.from('lugafilm_subscriptions').update({
+    status:'revoked',expires_at:new Date().toISOString()
+  }).eq('id',id);
+  if(error){alert('Could not disconnect: '+error.message);return;}
+  await adminSubscribers();
 }
 
 async function adminAnalytics(){
