@@ -4,7 +4,21 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LUGAFILM — All the latest movies in one place</title>
-<meta name="description" content="LUGAFILM — All the latest movies in one place.">
+<meta name="description" content="LUGAFILM — Watch and discover movies and series online. Free titles are available immediately and premium titles require an active subscription.">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://mugerwalouiscupa-beep.github.io/lugafilm/">
+<meta property="og:title" content="LUGAFILM — All the latest movies in one place">
+<meta property="og:description" content="Watch and discover movies and series on LUGAFILM.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://mugerwalouiscupa-beep.github.io/lugafilm/">
+<meta name="twitter:card" content="summary">
+<script type="application/ld+json">{
+  "@context":"https://schema.org",
+  "@type":"WebSite",
+  "name":"LUGAFILM",
+  "url":"https://mugerwalouiscupa-beep.github.io/lugafilm/",
+  "description":"LUGAFILM — All the latest movies in one place."
+}</script>
 <style>
 *{box-sizing:border-box}
 :root{--bg:#070b14;--panel:#101827;--panel2:#151f31;--text:#f5f7fb;--muted:#aeb8c8;--accent:#ffb703;--danger:#ef4444;--ok:#22c55e;--line:#263246}
@@ -19,6 +33,8 @@ button{cursor:pointer}
 .search{min-width:180px;flex:1;max-width:350px;background:#0d1524;border:1px solid var(--line);color:#fff;border-radius:10px;padding:10px 12px;outline:none}
 .nav button,.btn{border:1px solid var(--line);background:var(--panel2);color:#fff;border-radius:9px;padding:9px 12px}
 .nav button:hover,.btn:hover{border-color:#50617d}
+.viewerStatus{font-size:12px;color:var(--muted);padding:7px 9px;border:1px solid var(--line);border-radius:9px;background:#0a1321}
+.viewerStatus.logged{color:#bbf7d0;border-color:#166534}
 .primary{background:var(--accent)!important;color:#111!important;border-color:var(--accent)!important;font-weight:700}
 .danger{background:#35151a!important;border-color:#7f1d1d!important;color:#fecaca!important}
 main{max-width:1200px;margin:auto;padding:20px 16px 70px}
@@ -71,7 +87,9 @@ a{color:#ffd166}
     <div class="logo">LUGAFILM</div>
     <div class="tag">All the latest movies in one place.</div>
     <input id="search" class="search" type="search" placeholder="Search movies..." oninput="renderMovies()">
-    <button onclick="openViewerAuth()">Viewer Login</button>
+    <span id="viewerStatus" class="viewerStatus">Not logged in</span>
+    <button id="viewerBtn" onclick="openViewerAuth()">Viewer Login</button>
+    <button id="viewerLogoutBtn" class="danger hidden" onclick="viewerLogout()">Logout</button>
     <button onclick="openAdRequest()">Advertise</button>
     <button onclick="refreshSite()">↻ Refresh</button>
     <button onclick="shareSite()">Share</button>
@@ -197,9 +215,17 @@ a{color:#ffd166}
     <p class="small">Only registered LUGAFILM members can submit advertisements. Your email is taken from your logged-in account.</p>
     <div class="form">
       <input id="adTitle" placeholder="Advertisement title / business name">
-      <input id="adDuration" placeholder="Advertisement period e.g. 7 days, 30 days">
+      <select id="adDuration" onchange="updateAdPrice()">
+        <option value="1 day" data-amount="2000">1 day — UGX 2,000</option>
+        <option value="1 week" data-amount="8000">1 week — UGX 8,000</option>
+        <option value="1 month" data-amount="28000">1 month — UGX 28,000</option>
+      </select>
+      <div id="adPrice" class="msg ok">Advertising price: UGX 2,000</div>
       <textarea id="adMessage" placeholder="Advertisement text / offer / contact details"></textarea>
+      <label class="small">Advertisement image or video</label>
+      <input id="adMedia" type="file" accept="image/*,video/*">
       <input id="adPaymentRef" placeholder="Payment transaction/reference">
+      <div class="msg">Payment number: <b>0747064373</b>. Pay only after confirming the number through your trusted payment service. Never enter your Mobile Money PIN or OTP on this website.</div>
       <button class="btn primary" onclick="submitAdRequest()">Send advertisement request</button>
       <div id="adMsg" class="msg">Complete the advertisement payment through the agreed payment channel, then enter the payment reference and send the request. The administrator verifies payment before publishing.</div>
     </div>
@@ -280,7 +306,7 @@ const SITE_URL='https://mugerwalouiscupa-beep.github.io/lugafilm/';
 
 const db=supabase.createClient(SB_URL,SB_KEY,{
   auth:{
-    persistSession:false,
+    persistSession:true,
     autoRefreshToken:true,
     detectSessionInUrl:true,
     flowType:'implicit'
@@ -367,11 +393,30 @@ async function isAdmin(user=currentUser){
   return !!data;
 }
 
+function updateViewerUI(){
+  const status=$('viewerStatus');
+  const login=$('viewerBtn');
+  const logout=$('viewerLogoutBtn');
+  if(!status||!login||!logout)return;
+  if(currentUser){
+    status.textContent=`Logged in: ${currentUser.email||'viewer'}`;
+    status.className='viewerStatus logged';
+    login.textContent='My Account';
+    logout.classList.remove('hidden');
+  }else{
+    status.textContent='Not logged in';
+    status.className='viewerStatus';
+    login.textContent='Viewer Login';
+    logout.classList.add('hidden');
+  }
+}
+
 async function refreshAuth(){
   try{
     const {data}=await db.auth.getSession();
     currentUser=data?.session?.user||null;
     currentIsAdmin=await isAdmin(currentUser);
+    updateViewerUI();
 
     if(currentUser && currentIsAdmin){
       $('adminWho').textContent='Signed in as administrator: '+(currentUser.email||'');
@@ -470,6 +515,7 @@ async function viewerLogin(signup=false){
 
     currentUser=result.data.user||null;
     currentIsAdmin=await isAdmin(currentUser);
+    updateViewerUI();
 
     if(signup && !result.data.session){
       msg('viewerMsg','Account created. If email confirmation is enabled, check your email before logging in.','ok');
@@ -492,6 +538,7 @@ async function viewerLogout(){
   try{await db.auth.signOut()}catch(e){console.warn(e)}
   currentUser=null;
   currentIsAdmin=false;
+  updateViewerUI();
   clearCredentials();
   closeModal('viewerAuth');
   closeModal('adminDash');
@@ -548,6 +595,7 @@ async function adminLogout(){
   try{await db.auth.signOut()}catch(e){}
   currentUser=null;
   currentIsAdmin=false;
+  updateViewerUI();
   clearCredentials();
   closeModal('adminDash');
   await renderMovies();
@@ -889,25 +937,35 @@ async function openAdRequest(){
   openModal('adRequest');
 }
 
+function updateAdPrice(){
+  const el=$('adDuration');
+  const opt=el?.selectedOptions?.[0];
+  const amount=Number(opt?.dataset?.amount||2000);
+  if($('adPrice'))$('adPrice').textContent=`Advertising price: UGX ${amount.toLocaleString()}`;
+}
+
 async function submitAdRequest(){
   if(!requireLogin())return;
   const title=$('adTitle').value.trim();
-  const duration=$('adDuration').value.trim();
+  const duration=$('adDuration').value;
+  const amount=Number($('adDuration').selectedOptions?.[0]?.dataset?.amount||2000);
   const message=$('adMessage').value.trim();
   const paymentRef=$('adPaymentRef').value.trim();
-  if(!title||!message||!paymentRef){msg('adMsg','Enter the advertisement title, advertisement details and payment transaction/reference.','err');return;}
+  const media=$('adMedia').files?.[0]||null;
+  if(!title||!message||!paymentRef){msg('adMsg','Enter the advertisement title, details and payment transaction/reference.','err');return;}
   msg('adMsg','Sending advertisement request...');
-  const fullMessage=`${message}\n\nAdvertisement period: ${duration||'Not specified'}\nPayment reference: ${paymentRef}\nAdvertiser email: ${currentUser.email||''}`;
   try{
+    let mediaUrl=null;
+    if(media)mediaUrl=await uploadFile(media);
+    const fullMessage=`${message}\n\nAdvertisement period: ${duration}\nAmount: UGX ${amount.toLocaleString()}\nPayment reference: ${paymentRef}\nAdvertiser email: ${currentUser.email||''}`;
     const {error}=await db.from('lugafilm_ads').insert({
-      user_id:currentUser.id,
-      title,
-      message:fullMessage,
-      status:'pending'
+      user_id:currentUser.id,title,message:fullMessage,status:'pending',duration,amount,payment_reference:paymentRef,media_url:mediaUrl
     });
     if(error)throw error;
-    msg('adMsg','Request sent successfully. The administrator will verify the payment and approve the advertisement before it appears publicly.','ok');
-    $('adTitle').value='';$('adDuration').value='';$('adMessage').value='';$('adPaymentRef').value='';
+    msg('adMsg','Request sent. The administrator must verify the payment before approving and publishing the advertisement.','ok');
+    ['adTitle','adMessage','adPaymentRef'].forEach(id=>$(id).value='');
+    $('adMedia').value='';
+    updateAdPrice();
   }catch(e){
     msg('adMsg','Could not send advertisement request: '+(e.message||String(e)),'err');
   }
@@ -917,17 +975,17 @@ async function loadPublicAds(){
   const box=$('adGrid');
   if(!box)return;
   const {data,error}=await db.from('lugafilm_ads')
-    .select('id,title,message,created_at')
+    .select('id,title,message,duration,amount,media_url,expires_at,created_at')
     .eq('status','approved')
     .order('created_at',{ascending:false})
     .limit(50);
-  if(error){
-    box.innerHTML='<div class="empty">Advertisements are not available yet.</div>';
-    return;
-  }
-  box.innerHTML=(data||[]).map(a=>{
-    const clean=String(a.message||'').replace(/\n+/g,'<br>');
-    return `<article class="card"><div class="cardbody"><div class="title">${esc(a.title||'Advertisement')}</div><div class="meta">Sponsored advertisement</div><div>${esc(clean).replace(/&lt;br&gt;/g,'<br>')}</div></div></article>`;
+  if(error){box.innerHTML='<div class="empty">Advertisements are not available yet.</div>';return;}
+  const now=Date.now();
+  const ads=(data||[]).filter(a=>!a.expires_at||new Date(a.expires_at).getTime()>now);
+  box.innerHTML=ads.map(a=>{
+    const clean=esc(a.message||'').replace(/\n/g,'<br>');
+    const media=a.media_url?`<p><a href="${esc(a.media_url)}" target="_blank" rel="noopener">View advertisement media</a></p>`:'';
+    return `<article class="card"><div class="cardbody"><div class="title">${esc(a.title||'Advertisement')}</div><div class="meta">Sponsored • ${esc(a.duration||'')} ${a.amount?'• UGX '+Number(a.amount).toLocaleString():''}</div><div>${clean}</div>${media}</div></article>`;
   }).join('')||'<div class="empty">No approved advertisements yet.</div>';
 }
 
@@ -1182,12 +1240,12 @@ async function uploadFile(file){
   const path=`${Date.now()}_${Math.random().toString(36).slice(2)}_${safeName}`;
 
   const {error}=await db.storage
-    .from('lugafilm-media')
+    .from('lugafilms')
     .upload(path,file,{upsert:false,contentType:file.type||undefined});
 
   if(error)throw error;
 
-  const {data}=db.storage.from('lugafilm-media').getPublicUrl(path);
+  const {data}=db.storage.from('lugafilms').getPublicUrl(path);
   return data.publicUrl;
 }
 
@@ -1465,7 +1523,7 @@ async function adminAds(){
         <div class="listitem">
           <b>${esc(a.title||'Advertising request')}</b>
           <div>${esc(a.message||'')}</div>
-          <div class="small">User: ${esc(a.user_id||'')} • Status: ${esc(a.status||'pending')} • ${esc(a.created_at||'')}</div>
+          <div class="small">User: ${esc(a.user_id||'')} • Status: ${esc(a.status||'pending')} • ${esc(a.duration||'')} • UGX ${Number(a.amount||0).toLocaleString()} • Ref: ${esc(a.payment_reference||'not supplied')} • ${esc(a.created_at||'')}</div>
           <div class="actions" style="margin-top:8px">
             <button class="btn primary" onclick="approveAd('${esc(a.id)}')">Approve & Publish</button>
             <button class="btn danger" onclick="rejectAd('${esc(a.id)}')">Reject</button>
@@ -1536,6 +1594,8 @@ async function shareSite(){
    ========================= */
 async function init(){
   buildFilters();
+  updateAdPrice();
+  updateViewerUI();
 
   await refreshAuth();
   await handlePasswordRecovery();
@@ -1552,6 +1612,7 @@ async function init(){
     setTimeout(async()=>{
       currentUser=session?.user||null;
       currentIsAdmin=await isAdmin(currentUser);
+      updateViewerUI();
 
       if(event==='SIGNED_OUT'){
         clearCredentials();
