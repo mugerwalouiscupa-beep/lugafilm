@@ -752,27 +752,24 @@ function matchesMovie(m){
 }
 
 async function loadMovies(){
-  /*
-    IMPORTANT: Do not filter by a column name in the Supabase query here.
-    Different LUGAFILM database versions have used `published` and
-    `is_published`. Selecting first and filtering locally keeps the public
-    catalogue working with the existing database without changing/deleting
-    any movies.
-  */
+  // Read the catalogue first. Do not filter in the Supabase query because
+  // this project has used different publication column names over time.
   const {data,error}=await db
     .from('lugafilm_movies')
     .select('*')
     .order('created_at',{ascending:false});
 
   if(error){
-    console.error('Movie catalogue query:',error);
+    console.error('Movie catalogue error:',error);
     throw error;
   }
 
   const rows=data||[];
+  // Support the existing published field, and also older is_published data.
+  // If neither field exists, keep the row visible rather than hiding all movies.
   allMovies=rows.filter(m=>{
-    if(Object.prototype.hasOwnProperty.call(m,'is_published')) return m.is_published===true;
     if(Object.prototype.hasOwnProperty.call(m,'published')) return m.published===true;
+    if(Object.prototype.hasOwnProperty.call(m,'is_published')) return m.is_published===true;
     return true;
   });
   allSeries=allMovies.filter(x=>x.is_series===true);
@@ -1302,7 +1299,7 @@ async function saveMovie(isSeries=false){
       video_url:video,
       is_premium,
       is_series:isSeries,
-      is_published:true,
+      published:true,
       created_by:currentUser.id
     };
 
@@ -1344,9 +1341,9 @@ async function loadAdminMovies(){
   box.innerHTML=adminMovieList.map(m=>`
     <div class="listitem">
       <b>${esc(m.title)}</b>
-      <div class="small">${esc(m.genre||'')} • ${m.is_published?'Published':'Hidden'} • ${m.is_premium?'Premium':'Free'} • ${Number(m.views||0)} views</div>
+      <div class="small">${esc(m.genre||'')} • ${m.published?'Published':'Hidden'} • ${m.is_premium?'Premium':'Free'} • ${Number(m.views||0)} views</div>
       <div class="actions" style="margin-top:7px">
-        <button class="btn" onclick="toggleMovie('${esc(m.id)}',${!m.is_published})">${m.is_published?'Hide':'Publish'}</button>
+        <button class="btn" onclick="toggleMovie('${esc(m.id)}',${!m.published})">${m.published?'Hide':'Publish'}</button>
         <button class="btn danger" onclick="deleteMovie('${esc(m.id)}')">Delete</button>
       </div>
     </div>`).join('')||'<div class="empty">No movies yet.</div>';
@@ -1434,7 +1431,7 @@ async function deleteEpisode(id){
 
 async function toggleMovie(id,published){
   if(!currentIsAdmin)return;
-  const {error}=await db.from('lugafilm_movies').update({is_published:published}).eq('id',id);
+  const {error}=await db.from('lugafilm_movies').update({published}).eq('id',id);
   if(error){alert(error.message);return}
   await loadAdminMovies();
   await renderMovies();
@@ -1486,7 +1483,7 @@ async function adminSubscribers(){
 
 async function adminAnalytics(){
   const {data,error}=await db.from('lugafilm_movies')
-    .select('id,title,views,is_premium,is_published,is_series')
+    .select('id,title,views,is_premium,published,is_series')
     .order('views',{ascending:false});
 
   $('adminContent').innerHTML=`
@@ -1497,7 +1494,7 @@ async function adminAnalytics(){
         <div class="listitem">
           <b>${esc(m.title||'Untitled')}</b>
           <div class="small">
-            ${Number(m.views||0)} views • ${m.is_premium?'Premium':'Free'} • ${m.is_series?'Series':'Movie'} • ${m.is_published?'Published':'Hidden'}
+            ${Number(m.views||0)} views • ${m.is_premium?'Premium':'Free'} • ${m.is_series?'Series':'Movie'} • ${m.published?'Published':'Hidden'}
           </div>
         </div>`).join('')||'<div class="empty">No data.</div>'}</div>`}`;
 }
