@@ -752,17 +752,29 @@ function matchesMovie(m){
 }
 
 async function loadMovies(){
+  /*
+    IMPORTANT: Do not filter by a column name in the Supabase query here.
+    Different LUGAFILM database versions have used `published` and
+    `is_published`. Selecting first and filtering locally keeps the public
+    catalogue working with the existing database without changing/deleting
+    any movies.
+  */
   const {data,error}=await db
     .from('lugafilm_movies')
     .select('*')
-    .eq('is_published',true)
     .order('created_at',{ascending:false});
 
   if(error){
-    console.error(error);
+    console.error('Movie catalogue query:',error);
     throw error;
   }
-  allMovies=data||[];
+
+  const rows=data||[];
+  allMovies=rows.filter(m=>{
+    if(Object.prototype.hasOwnProperty.call(m,'is_published')) return m.is_published===true;
+    if(Object.prototype.hasOwnProperty.call(m,'published')) return m.published===true;
+    return true;
+  });
   allSeries=allMovies.filter(x=>x.is_series===true);
   return allMovies;
 }
