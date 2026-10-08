@@ -88,7 +88,7 @@ a{color:#ffd166}
   <nav class="nav">
     <div class="logo">LUGAFILM</div>
     <div class="tag">All the latest movies in one place.</div>
-    <input id="search" class="search" type="search" placeholder="Search movies..." oninput="renderMovies()">
+    <input id="search" class="search" name="movie-search" type="search" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Search movies..." oninput="renderMovies();renderSeries()">
     <span id="viewerStatus" class="viewerStatus">Not logged in</span>
     <button id="viewerBtn" onclick="openViewerAuth()">Viewer Login</button>
     <button id="viewerLogoutBtn" class="danger hidden" onclick="viewerLogout()">Logout</button>
@@ -305,6 +305,8 @@ a{color:#ffd166}
 const SB_URL='https://tyamblbkvgdvztfkkzcc.supabase.co';
 const SB_KEY='sb_publishable_1qJsptD3PERCwspJxpk_EQ_h9mQZCX9';
 const SITE_URL='https://mugerwalouiscupa-beep.github.io/lugafilm/';
+const STORAGE_BUCKET='lugafilms';
+const MAX_UPLOAD_BYTES=50*1024*1024;
 
 const db=supabase.createClient(SB_URL,SB_KEY,{
   auth:{
@@ -528,6 +530,7 @@ async function createViewerAccount(){
     }else{
       currentUser=data.user||null;
       currentIsAdmin=await isAdmin(currentUser);
+      clearMovieSearch();
       closeModal('viewerSignupModal');
       await renderMovies(); await renderSeries();
     }
@@ -582,6 +585,7 @@ async function viewerLogin(signup=false){
       ?'Administrator account detected. Open Admin Login/Dashboard for administrator functions.'
       :'Login successful.','ok');
 
+    clearMovieSearch();
     closeModal('viewerAuth');
     await renderMovies();
     await renderSeries();
@@ -596,6 +600,7 @@ async function viewerLogout(){
   currentIsAdmin=false;
   updateViewerUI();
   clearCredentials();
+  clearMovieSearch();
   closeModal('viewerAuth');
   closeModal('adminDash');
   await renderMovies();
@@ -791,8 +796,21 @@ function videoUrl(m){
   return m.video_url||m.video||'';
 }
 
+function movieSearchText(){
+  const el=$('search');
+  if(!el)return '';
+  const value=el.value.trim().toLowerCase();
+  if(/^\S+@\S+\.\S+$/.test(value))return '';
+  return value;
+}
+
+function clearMovieSearch(){
+  const el=$('search');
+  if(el)el.value='';
+}
+
 function matchesMovie(m){
-  const q=$('search').value.trim().toLowerCase();
+  const q=movieSearchText();
   const genre=(m.genre||'').toLowerCase();
 
   if(selectedGenre!=='All'){
@@ -849,7 +867,7 @@ async function renderSeries(){
 
   try{
     if(!allMovies.length)await loadMovies();
-    const q=$('search').value.trim().toLowerCase();
+    const q=movieSearchText();
     const list=allSeries.filter(m=>{
       if(selectedGenre!=='All' && selectedGenre!=='Series' && !(m.genre||'').toLowerCase().includes(selectedGenre.toLowerCase()))return false;
       if(q){
@@ -1350,18 +1368,27 @@ async function adminSeries(){
 
 async function uploadFile(file){
   if(!file)return null;
-
-  const ext=(file.name.split('.').pop()||'bin').toLowerCase();
+  if(file.size>MAX_UPLOAD_BYTES){
+    throw new Error(`File is too large (${(file.size/1024/1024).toFixed(2)} MB). This LUGAFILM setup currently allows files up to 50 MB.`);
+  }
   const safeName=file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
   const path=`${Date.now()}_${Math.random().toString(36).slice(2)}_${safeName}`;
-
-  const {error}=await db.storage
-    .from('lugafilms')
-    .upload(path,file,{upsert:false,contentType:file.type||undefined});
-
-  if(error)throw error;
-
-  const {data}=db.storage.from('lugafilms').getPublicUrl(path);
+  let result;
+  try{
+    result=await db.storage.from(STORAGE_BUCKET).upload(path,file,{upsert:false,contentType:file.type||undefined});
+  }catch(e){
+    throw new Error(`Storage upload failed in bucket "${STORAGE_BUCKET}": ${e.message||String(e)}`);
+  }
+  if(result.error){
+    const raw=result.error.message||String(result.error);
+    const lower=raw.toLowerCase();
+    if(lower.includes('bucket') && (lower.includes('not found') || lower.includes('does not exist'))){
+      throw new Error(`Storage bucket "${STORAGE_BUCKET}" was not found in the Supabase project used by LUGAFILM. Create/use a bucket with this exact ID, then try Save again.`);
+    }
+    throw new Error(`Storage upload failed: ${raw}`);
+  }
+  const {data}=db.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+  if(!data?.publicUrl)throw new Error(`The file uploaded, but no public URL was returned from bucket "${STORAGE_BUCKET}".`);
   return data.publicUrl;
 }
 
@@ -1821,6 +1848,7 @@ async function shareSite(){
    INIT
    ========================= */
 async function init(){
+  clearMovieSearch();
   buildFilters();
   updateAdPrice();
   updateViewerUI();
