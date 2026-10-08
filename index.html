@@ -868,7 +868,7 @@ async function renderSeries(){
 }
 
 function movieCard(m){
-  const premium=!!m.is_premium;
+  const premium=!!(m.is_premium ?? m.premium);
   const image=posterUrl(m);
   return `
     <article class="card">
@@ -898,7 +898,7 @@ async function watch(id){
 
   if(currentUser && !(await checkViewerAccess(currentUser)))return;
 
-  if(m.is_premium){
+  if(!!(m.is_premium ?? m.premium)){
     if(!requireLogin())return;
     const sub=await activeSub();
     if(!sub){
@@ -1398,11 +1398,12 @@ async function saveMovie(isSeries=false){
     const payload={
       title,
       genre,
+      category:genre,
       year,
       description,
       poster_url:poster||null,
       video_url:video,
-      is_premium,
+      premium:is_premium,
       is_series:isSeries,
       is_published:true,
       created_by:currentUser.id
@@ -1446,7 +1447,7 @@ async function loadAdminMovies(){
   box.innerHTML=adminMovieList.map(m=>`
     <div class="listitem">
       <b>${esc(m.title)}</b>
-      <div class="small">${esc(m.genre||'')} • ${m.is_published?'Published':'Hidden'} • ${m.is_premium?'Premium':'Free'} • ${Number(m.views||0)} views</div>
+      <div class="small">${esc(m.genre||'')} • ${m.is_published?'Published':'Hidden'} • ${(m.is_premium ?? m.premium)?'Premium':'Free'} • ${Number(m.views||0)} views</div>
       <div class="actions" style="margin-top:7px">
         <button class="btn" onclick="toggleMovie('${esc(m.id)}',${!m.is_published})">${m.is_published?'Hide':'Publish'}</button>
         <button class="btn danger" onclick="deleteMovie('${esc(m.id)}')">Delete</button>
@@ -1711,7 +1712,7 @@ async function adminAnalytics(){
         <div class="listitem">
           <b>${esc(m.title||'Untitled')}</b>
           <div class="small">
-            ${Number(m.views||0)} views • ${m.is_premium?'Premium':'Free'} • ${m.is_series?'Series':'Movie'} • ${m.is_published?'Published':'Hidden'}
+            ${Number(m.views||0)} views • ${(m.is_premium ?? m.premium)?'Premium':'Free'} • ${m.is_series?'Series':'Movie'} • ${m.is_published?'Published':'Hidden'}
           </div>
         </div>`).join('')||'<div class="empty">No data.</div>'}</div>`}`;
 }
