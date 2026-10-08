@@ -78,6 +78,7 @@ main{max-width:1200px;margin:auto;padding:20px 16px 70px}
 .small{font-size:12px;color:var(--muted)}
 .statusBadge{display:inline-block;padding:3px 7px;border-radius:999px;border:1px solid var(--line);font-size:11px}
 .statusBadge.pending{color:#fde68a;border-color:#854d0e}.statusBadge.active{color:#bbf7d0;border-color:#166534}.statusBadge.locked,.statusBadge.cancelled{color:#fecaca;border-color:#7f1d1d}
+.freeBadge{display:inline-block;padding:4px 9px;border-radius:999px;border:1px solid #166534;color:#bbf7d0;font-weight:800;font-size:11px;letter-spacing:.4px}.accessCard{margin:18px 0}.accessGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.accessPlan{padding:14px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.02)}
 footer{text-align:center;color:var(--muted);padding:30px 15px;border-top:1px solid var(--line)}
 a{color:#ffd166}
 </style>
@@ -105,6 +106,20 @@ a{color:#ffd166}
   </section>
 
   <div id="filters" class="filters"></div>
+
+  <section class="section accessCard">
+    <h2>LUGAFILM Subscription</h2>
+    <p class="small">Subscriptions are visible to everyone. Premium movies are locked until the administrator confirms your payment and grants access.</p>
+    <div id="subscriptionStatus" class="msg">Not logged in — choose a subscription after creating or logging into your viewer account.</div>
+    <div class="accessGrid">
+      <div class="accessPlan"><b>Daily</b><br>UGX 1,000<br><span class="small">24 hours</span></div>
+      <div class="accessPlan"><b>Weekly</b><br>UGX 4,000<br><span class="small">7 days</span></div>
+      <div class="accessPlan"><b>Monthly</b><br>UGX 15,000<br><span class="small">30 days</span></div>
+    </div>
+    <div class="actions" style="margin-top:10px">
+      <button class="btn primary" onclick="openSubscriptionForEveryone()">Subscribe / Check access</button>
+    </div>
+  </section>
 
   <section class="section">
     <h2>Movies</h2>
@@ -190,6 +205,7 @@ a{color:#ffd166}
     <button class="close" onclick="closeModal('subscribe')">×</button>
     <h2>Choose your LUGAFILM subscription</h2>
     <p class="small">Select a plan, then choose your payment method.</p>
+    <div class="msg">LUGAFILM payment number: <b>0747064373</b>. Never enter your Mobile Money PIN or OTP on this website.</div>
     <div class="grid">
       <button class="btn" onclick="selectPlan('daily',1000)">Daily<br><b>UGX 1,000</b><br><span class="small">24 hours</span></button>
       <button class="btn" onclick="selectPlan('weekly',4000)">Weekly<br><b>UGX 4,000</b><br><span class="small">7 days</span></button>
@@ -226,6 +242,7 @@ a{color:#ffd166}
       <textarea id="adMessage" placeholder="Advertisement text / offer / contact details"></textarea>
       <label class="small">Advertisement image or video</label>
       <input id="adMedia" type="file" accept="image/*,video/*">
+      <div class="small">Media files are uploaded to the same LUGAFILM storage bucket used by movie uploads: <b>lugafilms</b>.</div>
       <input id="adPaymentRef" placeholder="Payment transaction/reference">
       <div class="msg">Payment number: <b>0747064373</b>. Pay only after confirming the number through your trusted payment service. Never enter your Mobile Money PIN or OTP on this website.</div>
       <button class="btn primary" onclick="submitAdRequest()">Send advertisement request</button>
@@ -451,18 +468,20 @@ function updateViewerUI(){
   const status=$('viewerStatus');
   const login=$('viewerBtn');
   const logout=$('viewerLogoutBtn');
-  if(!status||!login||!logout)return;
-  if(currentUser){
-    status.textContent='Logged in';
-    status.className='viewerStatus logged';
-    login.textContent='My Account';
-    logout.classList.remove('hidden');
-  }else{
-    status.textContent='Not logged in';
-    status.className='viewerStatus';
-    login.textContent='Viewer Login';
-    logout.classList.add('hidden');
+  if(status&&login&&logout){
+    if(currentUser){
+      status.textContent='Logged in';
+      status.className='viewerStatus logged';
+      login.textContent='My Account';
+      logout.classList.remove('hidden');
+    }else{
+      status.textContent='Not logged in';
+      status.className='viewerStatus';
+      login.textContent='Viewer Login';
+      logout.classList.add('hidden');
+    }
   }
+  updateSubscriptionStatus();
 }
 
 async function refreshAuth(){
@@ -589,6 +608,7 @@ async function viewerLogin(signup=false){
     closeModal('viewerAuth');
     await renderMovies();
     await renderSeries();
+    await updateSubscriptionStatus();
   }catch(e){
     msg('viewerMsg',e.message||String(e),'err');
   }
@@ -605,6 +625,7 @@ async function viewerLogout(){
   closeModal('adminDash');
   await renderMovies();
   await renderSeries();
+  await updateSubscriptionStatus();
 }
 
 function openAdminLogin(){
@@ -902,6 +923,7 @@ function movieCard(m){
           ${m.year?' • '+esc(m.year):''}
           ${premium?' • Premium':' • Free'}
           ${m.views!=null?' • '+esc(m.views)+' views':''}
+          ${!premium?'<span class="freeBadge">FREE</span>':''}
         </div>
         <div class="actions">
           <button class="btn primary" onclick="watch('${esc(m.id)}')">Watch</button>
@@ -948,11 +970,66 @@ async function watch(id){
   }
 }
 
+async function getLatestSubscription(){
+  if(!currentUser)return null;
+  const {data,error}=await db.from('lugafilm_subscriptions')
+    .select('*')
+    .eq('user_id',currentUser.id)
+    .order('created_at',{ascending:false})
+    .limit(1)
+    .maybeSingle();
+  if(error){
+    console.warn('Subscription status:',error.message);
+    return null;
+  }
+  return data||null;
+}
+
+function subscriptionDisplayStatus(sub){
+  if(!sub)return {text:'No subscription request yet. Premium movies are locked. Free movies remain available.',type:''};
+  const status=String(sub.status||'pending').toLowerCase();
+  if(status==='active'){
+    if(sub.expires_at && new Date(sub.expires_at)<=new Date()){
+      return {text:'ACCESS CUT OFF — your subscription has expired. Renew and wait for administrator confirmation to restore premium access.',type:'err'};
+    }
+    return {text:'ACCESS GRANTED — the administrator has confirmed your payment. You can watch free and premium movies until '+new Date(sub.expires_at).toLocaleString()+'.',type:'ok'};
+  }
+  if(status==='rejected' || status==='denied'){
+    return {text:'ACCESS DENIED — the administrator did not approve this subscription request. Contact the administrator or submit a new payment reference.',type:'err'};
+  }
+  if(status==='expired'){
+    return {text:'ACCESS CUT OFF — your subscription has expired. Renew to regain premium access.',type:'err'};
+  }
+  return {text:'PENDING — your payment reference has been submitted. Premium access will remain locked until the administrator confirms the payment.',type:''};
+}
+
+async function updateSubscriptionStatus(){
+  const box=$('subscriptionStatus');
+  if(!box)return;
+  if(!currentUser){
+    box.textContent='Not logged in — subscriptions are available to registered viewers. Free movies are available immediately; premium movies require administrator-approved access.';
+    box.className='msg';
+    return;
+  }
+  const sub=await getLatestSubscription();
+  const out=subscriptionDisplayStatus(sub);
+  box.textContent=out.text;
+  box.className='msg '+(out.type||'');
+}
+
+async function openSubscriptionForEveryone(){
+  if(!currentUser){
+    openViewerAuth();
+    msg('viewerMsg','Create or log into your viewer account first. Free movies are available without a subscription; premium movies require approved subscription access.');
+    return;
+  }
+  await updateSubscriptionStatus();
+  openModal('subscribe');
+}
+
 async function activeSub(){
   if(!currentUser)return null;
-
-  const {data,error}=await db
-    .from('lugafilm_subscriptions')
+  const {data,error}=await db.from('lugafilm_subscriptions')
     .select('*')
     .eq('user_id',currentUser.id)
     .eq('status','active')
@@ -960,12 +1037,11 @@ async function activeSub(){
     .order('expires_at',{ascending:false})
     .limit(1)
     .maybeSingle();
-
   if(error){
     console.warn('Subscription check:',error.message);
     return null;
   }
-  return data;
+  return data||null;
 }
 
 /* =========================
@@ -983,7 +1059,7 @@ function selectPlan(plan,amount){
 
 function startPayment(method){
   if(!selectedPlan){msg('payMsg','Select a subscription plan first.','err');return;}
-  msg('payMsg',`${method} selected for UGX ${Number(selectedPlan.amount).toLocaleString()}. The secure payment gateway must be connected to LUGAFILM before this button can collect real money. Do not send money to an unverified number shown on the website.`);
+  msg('payMsg',`${method} selected. Pay UGX ${Number(selectedPlan.amount).toLocaleString()} to the LUGAFILM payment number 0747064373 using your trusted payment service, then enter the transaction/reference below and send it. The administrator must confirm the payment before premium access is granted.`);
 }
 
 async function submitPaymentReference(){
@@ -1049,6 +1125,7 @@ async function submitPaymentReference(){
       'Payment reference sent successfully. Your request is now PENDING. The administrator will verify the payment and grant access.',
       'ok'
     );
+    await updateSubscriptionStatus();
   }catch(e){
     console.error('Payment reference submission:',e);
     const detail=e?.message||String(e);
@@ -1101,7 +1178,8 @@ async function submitAdRequest(){
     $('adMedia').value='';
     updateAdPrice();
   }catch(e){
-    msg('adMsg','Could not send advertisement request: '+(e.message||String(e)),'err');
+    const detail=e?.message||String(e);
+    msg('adMsg','Could not send advertisement request: '+detail+' The advertisement media uses the LUGAFILM storage bucket "'+STORAGE_BUCKET+'".', 'err');
   }
 }
 
@@ -1619,7 +1697,7 @@ async function adminSubscribers(){
               Plan: ${esc(s.plan||'Plan')} •
               Status: <b>${esc(
                 (s.status==='active' && s.expires_at && new Date(s.expires_at)<=new Date())
-                  ? 'expired' : (s.status||'pending')
+                  ? 'expired' : ((s.status==='rejected'||s.status==='denied') ? 'denied' : (s.status||'pending'))
               )}</b> •
               Payment reference: <b>${esc(s.payment_reference||'Not supplied')}</b> •
               Expires: ${esc(s.expires_at||'Pending verification')}
@@ -1627,6 +1705,7 @@ async function adminSubscribers(){
             <div class="small">User ID: ${esc(s.user_id||'')} • Submitted: ${esc(s.created_at||'')}</div>
             <div class="actions" style="margin-top:8px">
               <button class="btn primary" onclick="confirmSubscription('${esc(s.id)}')">Confirm & Grant Access</button>
+              <button class="btn danger" onclick="denySubscription('${esc(s.id)}')">Deny Access</button>
               <button class="btn" onclick="extendSubscription('${esc(s.id)}')">Extend 30 Days</button>
               <button class="btn danger" onclick="expireSubscription('${esc(s.id)}')">End Subscription</button>
               <button class="btn danger" onclick="lockViewer('${esc(s.user_id)}')">Lock Viewer</button>
@@ -1667,6 +1746,20 @@ async function confirmSubscription(id){
 
   alert('Subscription confirmed and access granted until '+new Date(expires).toLocaleString()+'.');
   await adminSubscribers();
+}
+
+async function denySubscription(id){
+  if(!currentIsAdmin)return;
+  const reason=prompt('Reason for denying this subscription (optional):','Payment could not be verified');
+  if(reason===null)return;
+  const {error}=await db.from('lugafilm_subscriptions').update({
+    status:'rejected',
+    expires_at:null
+  }).eq('id',id);
+  if(error){alert('Could not deny access: '+error.message);return;}
+  alert('Subscription denied. Premium access remains blocked.');
+  await adminSubscribers();
+  if(currentUser)await updateSubscriptionStatus();
 }
 
 async function extendSubscription(id){
@@ -1820,6 +1913,7 @@ async function refreshSite(){
   await renderMovies();
   await renderSeries();
   await loadPublicAds();
+  await updateSubscriptionStatus();
   await notifications();
 }
 
@@ -1858,6 +1952,7 @@ async function init(){
   if(location.hash==="#admin" || location.hash==="#administrator" || new URLSearchParams(location.search).get("admin")==="1"){openModal("adminLogin");}
   await renderMovies();
   await renderSeries();
+  await updateSubscriptionStatus();
   await notifications();
 
   /*
@@ -1884,6 +1979,7 @@ async function init(){
 
       await renderMovies();
       await renderSeries();
+      await updateSubscriptionStatus();
       await loadPublicAds();
     },0);
   });
