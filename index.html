@@ -109,7 +109,7 @@ a{color:#ffd166}
 <div id="viewerAuth" class="modal hidden">
   <div class="box">
     <button class="close" onclick="closeModal('viewerAuth')">×</button>
-    <h2>Viewer Login</h2>
+    <h2 id="viewerTitle">Viewer Login</h2>
     <div class="form">
       <input id="ve" type="email" autocomplete="email" placeholder="Email address">
       <input id="vp" type="password" autocomplete="current-password" placeholder="Password">
@@ -197,6 +197,7 @@ a{color:#ffd166}
     <div class="form">
       <input id="adTitle" placeholder="Advertisement title / business name">
       <input id="adDuration" placeholder="Advertisement period e.g. 7 days, 30 days">
+      <input id="adAmount" type="number" min="0" step="100" placeholder="Amount paid in UGX">
       <textarea id="adMessage" placeholder="Advertisement text / offer / contact details"></textarea>
       <input id="adPaymentRef" placeholder="Payment transaction/reference">
       <button class="btn primary" onclick="submitAdRequest()">Send advertisement request</button>
@@ -544,6 +545,10 @@ async function adminLogin(){
   }
 }
 
+function closeAdmin(){
+  closeModal('adminDash');
+}
+
 async function adminLogout(){
   try{await db.auth.signOut()}catch(e){}
   currentUser=null;
@@ -707,14 +712,21 @@ async function loadMovies(){
   const {data,error}=await db
     .from('lugafilm_movies')
     .select('*')
-    .eq('is_published',true)
     .order('created_at',{ascending:false});
 
   if(error){
-    console.error(error);
+    console.error('Public movie load failed:',error);
     throw error;
   }
-  allMovies=data||[];
+  // Support both the current is_published field and older published records.
+  // Only hide a record when the available publish fields explicitly say false.
+  allMovies=(data||[]).filter(m=>{
+    if(m.is_published===true || m.published===true) return true;
+    if(m.is_published===false && m.published===false) return false;
+    if(m.is_published===false && m.published==null) return false;
+    if(m.published===false && m.is_published==null) return false;
+    return true;
+  });
   allSeries=allMovies.filter(x=>x.is_series===true);
   return allMovies;
 }
@@ -899,21 +911,26 @@ async function submitAdRequest(){
   const duration=$('adDuration').value.trim();
   const message=$('adMessage').value.trim();
   const paymentRef=$('adPaymentRef').value.trim();
-  if(!title||!message||!paymentRef){msg('adMsg','Enter the advertisement title, advertisement details and payment transaction/reference.','err');return;}
+  const amount=Number($('adAmount').value||0);
+  if(!title||!message||!paymentRef){msg('adMsg','Enter the advertisement title, details and payment transaction/reference.','err');return;}
+  if(!Number.isFinite(amount)||amount<0){msg('adMsg','Enter a valid payment amount.','err');return;}
   msg('adMsg','Sending advertisement request...');
   const fullMessage=`${message}\n\nAdvertisement period: ${duration||'Not specified'}\nPayment reference: ${paymentRef}\nAdvertiser email: ${currentUser.email||''}`;
   try{
     const {error}=await db.from('lugafilm_ads').insert({
       user_id:currentUser.id,
+      advertiser_name:currentUser.email||'LUGAFILM member',
       title,
       message:fullMessage,
+      plan:duration||'Not specified',
+      amount:amount||0,
       status:'pending'
     });
     if(error)throw error;
-    msg('adMsg','Request sent successfully. The administrator will verify the payment and approve the advertisement before it appears publicly.','ok');
-    $('adTitle').value='';$('adDuration').value='';$('adMessage').value='';$('adPaymentRef').value='';
+    msg('adMsg','Request sent. The administrator will check the payment reference before approving and publishing the advertisement.','ok');
+    $('adTitle').value='';$('adDuration').value='';$('adAmount').value='';$('adMessage').value='';$('adPaymentRef').value='';
   }catch(e){
-    msg('adMsg','Could not send advertisement request: '+(e.message||String(e)),'err');
+    msg('adMsg','Could not send advertisement request: '+(e.message||String(e))+' If it mentions a missing column, run the LUGAFILM repair SQL provided with this file.','err');
   }
 }
 
@@ -921,17 +938,18 @@ async function loadPublicAds(){
   const box=$('adGrid');
   if(!box)return;
   const {data,error}=await db.from('lugafilm_ads')
-    .select('id,title,message,created_at')
+    .select('*')
     .eq('status','approved')
     .order('created_at',{ascending:false})
     .limit(50);
   if(error){
     box.innerHTML='<div class="empty">Advertisements are not available yet.</div>';
+    console.warn('Public ads load failed:',error.message);
     return;
   }
   box.innerHTML=(data||[]).map(a=>{
-    const clean=String(a.message||'').replace(/\n+/g,'<br>');
-    return `<article class="card"><div class="cardbody"><div class="title">${esc(a.title||'Advertisement')}</div><div class="meta">Sponsored advertisement</div><div>${esc(clean).replace(/&lt;br&gt;/g,'<br>')}</div></div></article>`;
+    const body=String(a.message||a.content||a.description||'').replace(/\n+/g,'<br>');
+    return `<article class="card"><div class="cardbody"><div class="title">${esc(a.title||'Advertisement')}</div><div class="meta">Sponsored advertisement</div><div>${esc(body).replace(/&lt;br&gt;/g,'<br>')}</div></div></article>`;
   }).join('')||'<div class="empty">No approved advertisements yet.</div>';
 }
 
@@ -1279,7 +1297,7 @@ async function loadAdminMovies(){
       <b>${esc(m.title)}</b>
       <div class="small">${esc(m.category||m.genre||'')} • ${(m.is_published ?? m.published)?'Published':'Hidden'} • ${(m.premium ?? m.is_premium)?'Premium':'Free'} • ${Number(m.views||0)} views</div>
       <div class="actions" style="margin-top:7px">
-        <button class="btn" onclick="toggleMovie('${esc(m.id)}',${!m.published})">${(m.is_published ?? m.published)?'Hide':'Publish'}</button>
+        <button class="btn" title="Publish makes this title visible to viewers; Hide removes it from the public catalogue." onclick="toggleMovie('${esc(m.id)}',${!Boolean(m.is_published ?? m.published ?? false)})">${(m.is_published ?? m.published)?'Hide from viewers':'Publish for viewers'}</button>
         <button class="btn danger" onclick="deleteMovie('${esc(m.id)}')">Delete</button>
       </div>
     </div>`).join('')||'<div class="empty">No movies yet.</div>';
@@ -1400,57 +1418,73 @@ async function deleteAllMovies(){
 /* =========================
    ADMIN DATA VIEWS
    ========================= */
-async function adminSubscribers(){
-  if(!currentIsAdmin){$('adminContent').innerHTML='<div class="empty">Administrator access required.</div>';return;}
-  const {data,error}=await db.from('lugafilm_subscriptions').select('*').order('created_at',{ascending:false}).limit(200);
-  $('adminContent').innerHTML=`<h3>Subscription Requests</h3><div class="msg">Check the transaction in Mobile Money first. Mark payment CONFIRMED only after you verify it. Then APPROVE ACCESS to start the subscription period.</div>${error?`<div class="empty">${esc(error.message)}</div>`:`<div class="list">${(data||[]).map(s=>{
-    const status=String(s.status||'pending').toLowerCase();
-    const label=status==='active'?'APPROVED':status.toUpperCase();
-    const canConfirm=status==='pending';
-    const canApprove=status==='confirmed';
-    return `<div class="listitem"><b>${esc(s.plan||'Plan')} — UGX ${Number(s.amount||({'daily':1000,'weekly':4000,'monthly':15000}[s.plan]||0)).toLocaleString()}</b><div class="small">Viewer ID: ${esc(s.user_id||'')}<br>Mobile Money number: ${esc(s.payment_number||PAYMENT_NUMBER)}<br>Sender: ${esc(s.payment_sender||'Not provided')}<br>Transaction reference: <b>${esc(s.payment_reference||'Not provided')}</b><br>Status: <b>${esc(label)}</b><br>Submitted: ${esc(s.created_at||'')}<br>Expires: ${esc(s.expires_at||'Not yet approved')}</div><div class="actions" style="margin-top:8px">${canConfirm?`<button class="btn primary" onclick="confirmSubscription('${esc(s.id)}')">Confirm Payment</button>`:''}${canApprove?`<button class="btn primary" onclick="approveSubscription('${esc(s.id)}','${esc(s.plan||'daily')}')">Approve Access</button>`:''}${status!=='rejected'&&status!=='active'?`<button class="btn danger" onclick="rejectSubscription('${esc(s.id)}')">Reject</button>`:''}</div></div>`;
-  }).join('')||'<div class="empty">No subscription requests.</div>'}</div>`}`;
-}
 async function confirmSubscription(id){
-  if(!currentIsAdmin)return alert('Administrator access required.');
-  if(!confirm('Have you checked the Mobile Money transaction and confirmed the exact amount and reference?'))return;
-  const {error}=await db.from('lugafilm_subscriptions').update({status:'confirmed'}).eq('id',id).eq('status','pending');
+  if(!currentIsAdmin)return;
+  if(!confirm('Have you verified the Mobile Money transaction? Confirming payment does not yet grant viewing access.'))return;
+  const {error}=await db.from('lugafilm_subscriptions').update({status:'confirmed'}).eq('id',id);
   if(error){alert('Could not confirm payment: '+error.message);return;}
   await adminSubscribers();
 }
+
 async function approveSubscription(id,plan){
-  if(!currentIsAdmin)return alert('Administrator access required.');
-  const days=plan==='daily'?1:plan==='weekly'?7:30;
-  if(!confirm(`Grant premium access for ${days} day(s) starting now? Only do this after confirming the payment.`))return;
-  const expires=new Date(Date.now()+days*24*60*60*1000).toISOString();
-  const {error}=await db.from('lugafilm_subscriptions').update({status:'active',expires_at:expires}).eq('id',id).eq('status','confirmed');
-  if(error){alert('Could not approve access: '+error.message);return;}
+  if(!currentIsAdmin)return;
+  const days=String(plan||'daily').toLowerCase()==='weekly'?7:String(plan||'daily').toLowerCase()==='monthly'?30:1;
+  const expiresAt=new Date(Date.now()+days*86400000).toISOString();
+  const {error}=await db.from('lugafilm_subscriptions').update({status:'active',expires_at:expiresAt}).eq('id',id);
+  if(error){alert('Could not grant access: '+error.message);return;}
   await adminSubscribers();
 }
+
 async function rejectSubscription(id){
-  if(!currentIsAdmin)return alert('Administrator access required.');
-  if(!confirm('Reject this subscription request?'))return;
+  if(!currentIsAdmin)return;
+  if(!confirm('Reject this subscription request and deny premium access?'))return;
   const {error}=await db.from('lugafilm_subscriptions').update({status:'rejected'}).eq('id',id);
   if(error){alert('Could not reject request: '+error.message);return;}
   await adminSubscribers();
 }
 
-async function adminAnalytics(){
-  const {data,error}=await db.from('lugafilm_movies')
-    .select('id,title,views,premium,is_published,is_series')
-    .order('views',{ascending:false});
+async function adminSubscribers(){
+  if(!currentIsAdmin){$('adminContent').innerHTML='<div class="empty">Administrator access required.</div>';return;}
+  const {data,error}=await db.from('lugafilm_subscriptions').select('*').order('created_at',{ascending:false}).limit(500);
+  if(error){$('adminContent').innerHTML=`<h3>Subscription Requests</h3><div class="empty">${esc(error.message)}</div>`;return;}
+  const rows=data||[];
+  const now=Date.now();
+  const expiring=rows.filter(s=>String(s.status).toLowerCase()==='active'&&s.expires_at&&new Date(s.expires_at).getTime()>now&&new Date(s.expires_at).getTime()<=now+3*86400000).length;
+  const expired=rows.filter(s=>s.expires_at&&new Date(s.expires_at).getTime()<=now&&['active','approved','confirmed'].includes(String(s.status||'').toLowerCase())).length;
+  const paidRevenue=rows.filter(s=>['confirmed','active','approved'].includes(String(s.status||'').toLowerCase())).reduce((sum,s)=>sum+Number(s.amount||({'daily':1000,'weekly':4000,'monthly':15000}[s.plan]||0)),0);
+  $('adminContent').innerHTML=`<h3>Subscription Requests & Access</h3>
+    <div class="adminStats"><div class="stat"><b>${expiring}</b>Expiring in 3 days</div><div class="stat"><b>${expired}</b>Expired subscriptions</div><div class="stat"><b>UGX ${paidRevenue.toLocaleString()}</b>Verified subscription payments*</div></div>
+    <div class="msg">*Revenue counts only requests marked Confirmed, Active or Approved. Check the Mobile Money transaction before confirming payment. Expiry reminders are calculated automatically whenever this page opens.</div>
+    <div class="list">${rows.map(s=>{
+      const status=String(s.status||'pending').toLowerCase();
+      const expiry=s.expires_at?new Date(s.expires_at):null;
+      const isExpired=expiry && expiry.getTime()<=now && ['active','approved','confirmed'].includes(status);
+      const isExpiring=expiry && expiry.getTime()>now && expiry.getTime()<=now+3*86400000 && status==='active';
+      const label=isExpired?'EXPIRED':isExpiring?'EXPIRING SOON':status.toUpperCase();
+      const amount=Number(s.amount||({'daily':1000,'weekly':4000,'monthly':15000}[s.plan]||0));
+      const canConfirm=status==='pending';
+      const canGrant=status==='confirmed'||isExpired;
+      return `<div class="listitem"><b>${esc(s.plan||'Plan')} — UGX ${amount.toLocaleString()}</b><div class="small">Viewer ID: ${esc(s.user_id||'')}<br>Mobile Money number: ${esc(s.payment_number||PAYMENT_NUMBER)}<br>Sender: ${esc(s.payment_sender||'Not provided')}<br>Transaction reference: <b>${esc(s.payment_reference||'Not provided')}</b><br>Status: <b>${esc(label)}</b><br>Submitted: ${esc(s.created_at||'')}<br>Expires: ${esc(s.expires_at||'Not yet approved')}</div><div class="actions" style="margin-top:8px">${canConfirm?`<button class="btn primary" onclick="confirmSubscription('${esc(s.id)}')">Approve Payment</button>`:''}${canGrant?`<button class="btn primary" onclick="approveSubscription('${esc(s.id)}','${esc(s.plan||'daily')}')">Grant / Renew Access</button>`:''}${status!=='rejected'?`<button class="btn danger" onclick="rejectSubscription('${esc(s.id)}')">Deny Access</button>`:''}</div></div>`;
+    }).join('')||'<div class="empty">No subscription requests.</div>'}</div>`;
+}
 
-  $('adminContent').innerHTML=`
-    <h3>Analytics</h3>
-    ${error
-      ? `<div class="empty">${esc(error.message)}</div>`
-      : `<div class="list">${(data||[]).map(m=>`
-        <div class="listitem">
-          <b>${esc(m.title||'Untitled')}</b>
-          <div class="small">
-            ${Number(m.views||0)} views • ${(m.premium ?? m.is_premium)?'Premium':'Free'} • ${m.is_series?'Series':'Movie'} • ${(m.is_published ?? m.published)?'Published':'Hidden'}
-          </div>
-        </div>`).join('')||'<div class="empty">No data.</div>'}</div>`}`;
+async function adminAnalytics(){
+  const [moviesResult,subsResult,adsResult]=await Promise.all([
+    db.from('lugafilm_movies').select('id,title,views,premium,is_premium,is_published,published,is_series'),
+    db.from('lugafilm_subscriptions').select('plan,amount,status,expires_at'),
+    db.from('lugafilm_ads').select('*')
+  ]);
+  const subs=subsResult.data||[];
+  const ads=adsResult.data||[];
+  const movieRevenue=subs.filter(s=>['confirmed','active','approved'].includes(String(s.status||'').toLowerCase())).reduce((sum,s)=>sum+Number(s.amount||({'daily':1000,'weekly':4000,'monthly':15000}[s.plan]||0)),0);
+  const adRevenue=ads.filter(a=>String(a.status||'').toLowerCase()==='approved').reduce((sum,a)=>sum+Number(a.payment_amount ?? a.amount ?? 0),0);
+  const movies=moviesResult.data||[];
+  $('adminContent').innerHTML=`<h3>Analytics & Earnings</h3>
+    <div class="adminStats"><div class="stat"><b>UGX ${movieRevenue.toLocaleString()}</b>Verified movie subscription payments</div><div class="stat"><b>UGX ${adRevenue.toLocaleString()}</b>Recorded advertisement payments</div><div class="stat"><b>UGX ${(movieRevenue+adRevenue).toLocaleString()}</b>Total recorded income</div></div>
+    <div class="msg">Subscription income includes requests marked Confirmed, Active or Approved. Advertisement income uses the amount recorded when the admin approves an advert. These are recorded amounts, not automatic bank/mobile-money statements.</div>
+    ${moviesResult.error?`<div class="empty">Could not load movie analytics: ${esc(moviesResult.error.message)}</div>`:`<h4>Movie and series performance</h4><div class="list">${movies.sort((a,b)=>Number(b.views||0)-Number(a.views||0)).map(m=>`<div class="listitem"><b>${esc(m.title||'Untitled')}</b><div class="small">${Number(m.views||0)} views • ${(m.premium??m.is_premium)?'Premium':'Free'} • ${m.is_series?'Series':'Movie'} • ${(m.is_published??m.published)?'Published':'Hidden'}</div></div>`).join('')||'<div class="empty">No movies or series.</div>'}</div>`}
+    ${subsResult.error?`<div class="empty">Subscription totals unavailable: ${esc(subsResult.error.message)}</div>`:''}
+    ${adsResult.error?`<div class="empty">Advertisement totals unavailable: ${esc(adsResult.error.message)}</div>`:''}`;
 }
 
 async function adminMessages(){
@@ -1485,11 +1519,11 @@ async function adminAds(){
       : `<div class="list" style="margin-top:12px">${(data||[]).map(a=>`
         <div class="listitem">
           <b>${esc(a.title||'Advertising request')}</b>
-          <div>${esc(a.message||'')}</div>
-          <div class="small">User: ${esc(a.user_id||'')} • Status: ${esc(a.status||'pending')} • ${esc(a.created_at||'')}</div>
+          <div>${esc(a.message||a.content||a.description||'')}</div>
+          <div class="small">User: ${esc(a.user_id||'')} • Status: ${esc(a.status||'pending')} • Payment reference: ${esc(a.payment_reference||'Not recorded')} • Recorded amount: UGX ${Number(a.payment_amount ?? a.amount ?? 0).toLocaleString()} • ${esc(a.created_at||'')}</div>
           <div class="actions" style="margin-top:8px">
-            <button class="btn primary" onclick="approveAd('${esc(a.id)}')">Approve & Publish</button>
-            <button class="btn danger" onclick="rejectAd('${esc(a.id)}')">Reject</button>
+            ${String(a.status||'pending').toLowerCase()!=='approved'?`<button class="btn primary" onclick="approveAd('${esc(a.id)}')">Verify Payment & Approve</button>`:''}
+            ${String(a.status||'pending').toLowerCase()!=='rejected'?`<button class="btn danger" onclick="rejectAd('${esc(a.id)}')">Reject / Deny</button>`:''}
             <button class="btn danger" onclick="deleteAd('${esc(a.id)}')">Delete</button>
           </div>
         </div>`).join('')||'<div class="empty">No advertising requests.</div>'}</div>`}`;
@@ -1497,9 +1531,13 @@ async function adminAds(){
 
 async function approveAd(id){
   if(!currentIsAdmin)return;
-  if(!confirm('Confirm that payment has been verified, then publish this advertisement?'))return;
-  const {error}=await db.from('lugafilm_ads').update({status:'approved'}).eq('id',id);
-  if(error){alert('Could not approve: '+error.message);return;}
+  if(!confirm('Have you checked the Mobile Money transaction and verified payment? Approving will publish this advertisement.'))return;
+  const amountText=prompt('Enter the actual advertisement payment received in UGX (enter 0 if unpaid/free):','0');
+  if(amountText===null)return;
+  const amount=Number(amountText);
+  if(!Number.isFinite(amount)||amount<0){alert('Enter a valid amount.');return;}
+  const {error}=await db.from('lugafilm_ads').update({status:'approved',amount:amount}).eq('id',id);
+  if(error){alert('Could not approve advertisement: '+error.message);return;}
   await adminAds();
   await loadPublicAds();
 }
